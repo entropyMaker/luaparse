@@ -32,13 +32,13 @@ local keywords = {
 
 local function is_identifier_start(c)
   return c == 95 -- _
-      or (c >= 65 and c <= 90) -- A-Z
-      or (c >= 97 and c <= 122) -- a-z
+      or (65 <= c and c <= 90) -- A-Z
+      or (97 <= c and c <= 122) -- a-z
 end
 
 local function is_identifier_part(c)
-  return is_identifier_start(c)
-      or (c >= 48 and c <= 57) -- 0-9
+  return (48 <= c and c <= 57) -- 0-9
+      or is_identifier_start(c)
 end
 
 local function scan_identifier(input, index)
