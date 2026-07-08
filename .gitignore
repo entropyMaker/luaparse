@@ -1,0 +1,31 @@
+.DS_Store
+Thumbs.db
+
+# Editor and IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# LuaRocks and Lua build artifacts
+*.rock
+luarocks/
+lua_modules/
+lib/
+bin/
+
+# Test and coverage output
+.luacov
+.luacov.*
+luacov.report.out
+coverage/
+
+# Logs and local environment files
+*.log
+.env
+.env.*
+
+# Temporary files
+tmp/
+temp/
