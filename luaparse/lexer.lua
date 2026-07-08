@@ -1,27 +1,32 @@
 local lexer = {}
 
+-- Token types: EOF, BooleanLiteral, NumberLiteral, StringLiteral, NilLiteral,
+-- VarargLiteral, Keyword, Identifier, Punctuator, Comment.
+
 local keywords = {
-  ["and"] = true,
-  ["break"] = true,
-  ["do"] = true,
-  ["else"] = true,
-  ["elseif"] = true,
-  ["end"] = true,
-  ["false"] = true,
-  ["for"] = true,
-  ["function"] = true,
-  ["if"] = true,
-  ["in"] = true,
-  ["local"] = true,
-  ["nil"] = true,
-  ["not"] = true,
-  ["or"] = true,
-  ["repeat"] = true,
-  ["return"] = true,
-  ["then"] = true,
-  ["true"] = true,
-  ["until"] = true,
-  ["while"] = true,
+  ["false"] = "BooleanLiteral",
+  ["true"] = "BooleanLiteral",
+
+  ["nil"] = "NilLiteral",
+
+  ["and"] = "Keyword",
+  ["break"] = "Keyword",
+  ["do"] = "Keyword",
+  ["else"] = "Keyword",
+  ["elseif"] = "Keyword",
+  ["end"] = "Keyword",
+  ["for"] = "Keyword",
+  ["function"] = "Keyword",
+  ["if"] = "Keyword",
+  ["in"] = "Keyword",
+  ["local"] = "Keyword",
+  ["not"] = "Keyword",
+  ["or"] = "Keyword",
+  ["repeat"] = "Keyword",
+  ["return"] = "Keyword",
+  ["then"] = "Keyword",
+  ["until"] = "Keyword",
+  ["while"] = "Keyword",
 }
 
 return lexer
