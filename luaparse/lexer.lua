@@ -32,13 +32,13 @@ local keywords = {
 
 local function is_identifier_start(c)
   return c == 95 -- _
-      or (65 <= c and c <= 90) -- A-Z
-      or (97 <= c and c <= 122) -- a-z
+    or (65 <= c and c <= 90) -- A-Z
+    or (97 <= c and c <= 122) -- a-z
 end
 
 local function is_identifier_part(c)
   return (48 <= c and c <= 57) -- 0-9
-      or is_identifier_start(c)
+    or is_identifier_start(c)
 end
 
 local function scan_identifier(input, index)
@@ -59,29 +59,29 @@ end
 -- [-+] (i.e. the positive or negative sign "+" or "-") is alphabet 4
 -- accept states: 2, 4, 6, 7
 local decimal_trans_table = {
-  {2, 3, 0, 0},
-  {2, 4, 5, 0},
-  {6, 0, 0, 0},
-  {4, 0, 5, 0},
-  {7, 0, 0, 8},
-  {6, 0, 5, 0},
-  {7, 0, 0, 0},
-  {7, 0, 0, 0},
+  { 2, 3, 0, 0 },
+  { 2, 4, 5, 0 },
+  { 6, 0, 0, 0 },
+  { 4, 0, 5, 0 },
+  { 7, 0, 0, 8 },
+  { 6, 0, 5, 0 },
+  { 7, 0, 0, 0 },
+  { 7, 0, 0, 0 },
 }
 
 local function starts_with_0x(input, index)
-  if index >= #input or byte(input, index) ~= 48 --[["0"]] then
+  if index >= #input or byte(input, index) ~= 48 then -- "."
     return false
   end
 
-  local second = byte(input, index+1)
+  local second = byte(input, index + 1)
   return second == 88 or second == 120 -- "x" or "X"
 end
 
 local function is_hex_char(char)
   return (48 <= char and char <= 57) -- 0-9
-      or (65 <= char and char <= 70) -- A-F
-      or (97 <= char and char <= 102) -- a-f
+    or (65 <= char and char <= 70) -- A-F
+    or (97 <= char and char <= 102) -- a-f
 end
 
 local function scan_number(input, index)
@@ -89,7 +89,9 @@ local function scan_number(input, index)
 
   if starts_with_0x(input, index) then
     local i = index + 2
-    while i <= length and is_hex_char(byte(input, i)) do i = i + 1 end
+    while i <= length and is_hex_char(byte(input, i)) do
+      i = i + 1
+    end
     return i > index + 2 and i or index
   end
 
@@ -108,16 +110,12 @@ local function scan_number(input, index)
       alphabet = 4
     end
 
-    if alphabet == 0 then
-      break
-    end
+    if alphabet == 0 then break end
 
     state = decimal_trans_table[state][alphabet]
-    if state == 0 then
-      break
-    end
+    if state == 0 then break end
 
-    if state ==  2 or state ==  4 or state ==  6 or state ==  7 then
+    if state == 2 or state == 4 or state == 6 or state == 7 then
       last_accept = i + 1
     end
   end
