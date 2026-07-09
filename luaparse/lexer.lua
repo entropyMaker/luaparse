@@ -52,6 +52,50 @@ local function scan_identifier_keyword(input, index)
   return i
 end
 
+local function scan_long_string_opener(input, index)
+  local length = #input
+  if index > length or byte(input, index) ~= 91 then -- [
+    return index
+  end
+
+  local i = index + 1
+  while i <= length and byte(input, i) == 61 do -- =
+    i = i + 1
+  end
+
+  return (i <= length and byte(input, i) == 91) and i + 1 or index
+end
+
+local function scan_long_string(input, index)
+  local i = scan_long_string_opener(input, index)
+  if i == index then return index end
+
+  local length = #input
+  local level = i - index - 2 -- level is the number of "=" in the opener
+
+  while i <= length do
+    if byte(input, i) == 93 then -- ]
+      local j = i + 1
+      local n = 0
+
+      while n < level and j <= length and byte(input, j) == 61 do -- =
+        j = j + 1
+        n = n + 1
+      end
+
+      if n == level and j <= length and byte(input, j) == 93 then -- ]
+        return j + 1
+      end
+
+      i = j
+    else
+      i = i + 1
+    end
+  end
+
+  return index
+end
+
 -- requirements:
 -- 1. start state must be 1
 -- 2. accept states must be >= accept
