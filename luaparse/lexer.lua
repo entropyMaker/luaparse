@@ -135,7 +135,7 @@ local decimal_trans_table = {
   { 8, 0, 0, 0 }, -- 8 exponent digits
 }
 
-local function decimal_alphabet_range(b)
+local function decimal_alphabet(b)
   if 48 <= b and b <= 57 then -- 0-9
     return 1
   elseif b == 46 then -- "."
@@ -178,9 +178,92 @@ local function scan_number(input, index)
     input,
     index,
     decimal_trans_table,
-    decimal_alphabet_range,
+    decimal_alphabet,
     5
   )
+end
+
+-- alphabet 1: the quote (single or double but must be consistent when matching)
+-- alphabet 2: digits [0-9]
+-- alphabet 3: a, b, f, n, r, t, v
+--   and another quote (double quote if the quote is single and vice versa)
+-- alphabet 4: the escape character "\\" (ascii 92)
+-- alphabet 5: a real newline (ascii 10)
+-- alphabet 6: a real return (ascii 13)
+-- alphabet 7: other byte value
+local quote_string_trans_table = {
+  { 2, 0, 0, 0, 0, 0, 0 }, -- 1. start
+  { 7, 2, 2, 3, 0, 0, 2 }, -- 2. seen one quote and several (or 0) valid characters
+  { 2, 4, 2, 2, 2, 6, 0 }, -- 3. just seen "\\"
+  { 7, 5, 2, 3, 0, 0, 2 }, -- 4. just seen "\\" and 1 digit
+  { 7, 2, 2, 3, 0, 0, 2 }, -- 5. just seen "\\" and 2 digits
+  { 7, 2, 2, 3, 2, 0, 2 }, -- 6. just seen "\\" and "\r"
+  { 0, 0, 0, 0, 0, 0, 0 }, -- 7. seen the close quote, the only accept state
+}
+
+local function quote_string_alphabet(del)
+  return function(char)
+    if char == del then return 1 end
+    if 48 <= char and char <= 57 then return 2 end
+    if
+      char == 97
+      or char == 98
+      or char == 102
+      or char == 110
+      or char == 114
+      or char == 116
+      or char == 118
+      or char == 34
+      or char == 39
+    then
+      return 3
+    end
+
+    if char == 92 then return 4 end
+    if char == 10 then return 5 end
+    if char == 13 then return 6 end
+    return 7
+  end
+end
+
+local single_quote_string_alphabet = quote_string_alphabet(39)
+local double_quote_string_alphabet = quote_string_alphabet(34)
+
+local function scan_quote_string(input, index)
+  local length = #input
+  if index > length then return index end
+  local del = byte(input, index)
+  if del ~= 34 and del ~= 39 then return index end
+  return execute_state_machine(
+    input,
+    index,
+    quote_string_trans_table,
+    del == 39 and single_quote_string_alphabet or double_quote_string_alphabet,
+    7
+  )
+end
+
+local function scan_comment(input, index)
+  local length = #input
+  if
+    index >= length
+    or byte(input, index) ~= 45 -- -
+    or byte(input, index + 1) ~= 45 -- -
+  then
+    return index
+  end
+
+  local long_comment_end = scan_long_string(input, index + 2)
+  if long_comment_end > index + 2 then return long_comment_end end
+
+  local i = index + 2
+  while i <= length do
+    local char = byte(input, i)
+    if char == 10 or char == 13 then break end
+    i = i + 1
+  end
+
+  return i
 end
 
 return lexer
