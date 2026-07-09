@@ -1,8 +1,22 @@
 local lexer = {}
 local byte = string.byte
+local sub = string.sub
+local format = string.format
 
 -- Token types: EOF, BooleanLiteral, NumberLiteral, StringLiteral, NilLiteral,
 -- VarargLiteral, Keyword, Identifier, Punctuator, Comment.
+local token_types = {
+  ["EOF"] = true,
+  ["BooleanLiteral"] = true,
+  ["NumberLiteral"] = true,
+  ["StringLiteral"] = true,
+  ["NilLiteral"] = true,
+  ["VarargLiteral"] = true,
+  ["Keyword"] = true,
+  ["Identifier"] = true,
+  ["Punctuator"] = true,
+  ["Comment"] = true,
+}
 
 local keywords = {
   ["false"] = "BooleanLiteral",
@@ -181,6 +195,15 @@ local function is_hex_char(char)
     or (97 <= char and char <= 102) -- a-f
 end
 
+local function is_number_continuation(char)
+  return char ~= nil
+    and (
+      (48 <= char and char <= 57) -- 0-9
+      or is_identifier_start(char)
+      or char == 46 -- .
+    )
+end
+
 local function scan_number(input, index)
   local length = #input
 
@@ -339,6 +362,77 @@ local function scan_vararg(input, index)
     return index
   end
   return index + 3
+end
+
+local function scan_token(input, index)
+  index = skip_whitespaces(input, index)
+  local length = #input
+  if index > length then return "EOF", index end
+
+  -- dispatch based on first character
+  local first = byte(input, index)
+  if is_identifier_start(first) then
+    local end_ind = scan_identifier_keyword(input, index)
+    local t = keywords[sub(input, index, end_ind - 1)]
+    if t == nil then t = "Identifier" end
+    return t, end_ind
+  elseif 48 <= first and first <= 57 then
+    local end_ind = scan_number(input, index)
+    if end_ind > index and not is_number_continuation(byte(input, end_ind)) then
+      return "NumberLiteral", end_ind
+    end
+    return format("malformed number near %d", index), index
+  elseif first == 46 then -- .
+    local end_ind = scan_vararg(input, index)
+    if end_ind > index then return "VarargLiteral", end_ind end
+    end_ind = scan_number(input, index)
+    if end_ind > index then
+      if not is_number_continuation(byte(input, end_ind)) then
+        return "NumberLiteral", end_ind
+      end
+      return format("malformed number near %d", index), index
+    end
+    end_ind = scan_punctuator(input, index)
+    if end_ind > index then return "Punctuator", end_ind end
+    return format("unknown token after . near %d", index), index
+  elseif first == 45 then -- -
+    local comment_start = index + 2
+    if
+      index < length
+      and byte(input, index + 1) == 45 -- -
+      and scan_long_string_opener(input, comment_start) > comment_start
+    then
+      local end_ind = scan_long_string(input, comment_start)
+      if end_ind > comment_start then return "Comment", end_ind end
+      return format("malformed long comment near %d", index), index
+    end
+
+    local end_ind = scan_comment(input, index)
+    if end_ind > index then return "Comment", end_ind end
+    end_ind = scan_punctuator(input, index)
+    if end_ind > index then return "Punctuator", end_ind end
+    return format("unknown token after - near %d", index), index
+  elseif first == 91 then -- [
+    if scan_long_string_opener(input, index) > index then
+      local end_ind = scan_long_string(input, index)
+      if end_ind > index then return "StringLiteral", end_ind end
+      return format("malformed long string near %d", index), index
+    end
+
+    local end_ind = scan_long_string(input, index)
+    if end_ind > index then return "StringLiteral", end_ind end
+    end_ind = scan_punctuator(input, index)
+    if end_ind > index then return "Punctuator", end_ind end
+    return format("unknown token after [ near %d", index), index
+  elseif first == 34 or first == 39 then -- " or '
+    local end_ind = scan_quote_string(input, index)
+    if end_ind > index then return "StringLiteral", end_ind end
+    return format("malformed string near %d", index), index
+  else
+    local end_ind = scan_punctuator(input, index)
+    if end_ind > index then return "Punctuator", end_ind end
+    return format("unknown token near %d", index), index
+  end
 end
 
 return lexer
