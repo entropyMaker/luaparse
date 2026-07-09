@@ -4,6 +4,7 @@ Thumbs.db
 # Editor and IDE files
 .idea/
 .vscode/
+.zed/
 *.swp
 *.swo
 *~
