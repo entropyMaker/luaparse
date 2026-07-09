@@ -52,6 +52,24 @@ local function scan_identifier_keyword(input, index)
   return i
 end
 
+local function skip_whitespaces(input, index)
+  local length = #input
+  local i = index
+
+  while i <= length do
+    local char = byte(input, i)
+    if
+      not (9 <= char and char <= 13) -- tab, LF, vertical tab, form feed, CR
+      and char ~= 32 -- space
+    then
+      break
+    end
+    i = i + 1
+  end
+
+  return i
+end
+
 local function scan_long_string_opener(input, index)
   local length = #input
   if index > length or byte(input, index) ~= 91 then -- [
@@ -264,6 +282,63 @@ local function scan_comment(input, index)
   end
 
   return i
+end
+
+local function scan_punctuator(input, index)
+  local length = #input
+  if index > length then return index end
+
+  local first = byte(input, index)
+  local second = index < length and byte(input, index + 1) or -1
+  if
+    (first == 61 and second == 61) -- ==
+    or (first == 126 and second == 61) -- ~=
+    or (first == 60 and second == 61) -- <=
+    or (first == 62 and second == 61) -- >=
+    or (first == 46 and second == 46) -- ..
+  then
+    return index + 2
+  end
+
+  if
+    first == 43 -- +
+    or first == 45 -- -
+    or first == 42 -- *
+    or first == 47 -- /
+    or first == 37 -- %
+    or first == 94 -- ^
+    or first == 35 -- #
+    or first == 60 -- <
+    or first == 62 -- >
+    or first == 61 -- =
+    or first == 40 -- (
+    or first == 41 -- )
+    or first == 123 -- {
+    or first == 125 -- }
+    or first == 91 -- [
+    or first == 93 -- ]
+    or first == 59 -- ;
+    or first == 58 -- :
+    or first == 44 -- ,
+    or first == 46 -- .
+  then
+    return index + 1
+  end
+
+  return index
+end
+
+local function scan_vararg(input, index)
+  local length = #input
+  if
+    index + 2 > length
+    or byte(input, index) ~= 46
+    or byte(input, index + 1) ~= 46
+    or byte(input, index + 2) ~= 46
+  then
+    return index
+  end
+  return index + 3
 end
 
 return lexer
