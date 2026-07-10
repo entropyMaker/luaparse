@@ -1,7 +1,9 @@
 local lexer = {}
 local byte = string.byte
+local chr = string.char
 local sub = string.sub
 local format = string.format
+local table_concat = table.concat
 
 -- Token types: EOF, BooleanLiteral, NumberLiteral, StringLiteral, NilLiteral,
 -- VarargLiteral, Keyword, Identifier, Punctuator, Comment.
@@ -44,15 +46,31 @@ local keywords = {
   ["while"] = "Keyword",
 }
 
+local escaped2char = {
+  [97] = "\a",
+  [98] = "\b",
+  [102] = "\f",
+  [110] = "\n",
+  [114] = "\r",
+  [116] = "\t",
+  [118] = "\v",
+  [92] = "\\",
+  [39] = "'",
+  [34] = '"',
+}
+
 local function is_identifier_start(c)
   return c == 95 -- _
     or (65 <= c and c <= 90) -- A-Z
     or (97 <= c and c <= 122) -- a-z
 end
 
+local function is_digit(c)
+  return 48 <= c and c <= 57 -- 0-9
+end
+
 local function is_identifier_part(c)
-  return (48 <= c and c <= 57) -- 0-9
-    or is_identifier_start(c)
+  return is_digit(c) or is_identifier_start(c)
 end
 
 local function scan_identifier_keyword(input, index)
@@ -115,6 +133,68 @@ local function scan_long_string(input, index)
   return index
 end
 
+-- there are 3 cases:
+-- 1. invalid quoted string literal, return index, reason
+-- 2. need_value is true,
+--   return index after close quote character, string value of the quoted string
+-- 3. need_value is false,
+--   return index after close quote character and empty string (for consistency)
+local function scan_quote_string_manual(input, index, need_value)
+  local quote = byte(input, index)
+  local length = #input
+  local bytes = need_value and {} or nil
+  local i = index + 1
+
+  while i <= length do
+    local char = byte(input, i)
+    if char == quote then
+      return i + 1, (bytes and table_concat(bytes) or "")
+    end
+
+    if char == 92 then -- the escape character
+      i = i + 1
+      if i > length then return index, "escape character at end of input" end
+      local escaped = byte(input, i)
+      local single_escaped = escaped2char[escaped]
+      if single_escaped ~= nil then
+        if bytes then bytes[#bytes + 1] = single_escaped end
+        i = i + 1
+      elseif escaped == 10 or escaped == 13 then -- newline or carriage return
+        if i >= length then return index, "unfinished string" end
+        -- lua normalizes LF, CR, CRLF and LFCR to a single LF
+        if bytes then bytes[#bytes + 1] = "\n" end
+        local another = escaped == 10 and 13 or 10
+        i = i + (byte(input, i + 1) == another and 2 or 1)
+      elseif is_digit(escaped) then
+        -- scan digits but at most 3 characters
+        local j = i + 1
+        local value = escaped - 48
+        while j <= length and j < i + 3 do
+          local j_char = byte(input, j)
+          if not is_digit(j_char) then break end
+          value = value * 10 + j_char - 48
+          j = j + 1
+        end
+        if value > 255 then return index, "decimal escape too large" end
+        if bytes then bytes[#bytes + 1] = chr(value) end
+        i = j
+      else
+        -- TODO in lua5.1, unknown escape sequences are treated as itself
+        -- this behavior changed in newer version
+        if bytes then bytes[#bytes + 1] = chr(escaped) end
+        i = i + 1
+      end
+    elseif char == 10 or char == 13 then -- newline or carriage return
+      return index, "unfinished string"
+    else
+      if bytes then bytes[#bytes + 1] = chr(char) end
+      i = i + 1
+    end
+  end
+
+  return index, "unfinished string"
+end
+
 -- requirements:
 -- 1. start state must be 1
 -- 2. accept states must be >= parameter `accept`
@@ -155,7 +235,7 @@ local decimal_trans_table = {
 }
 
 local function decimal_alphabet(b)
-  if 48 <= b and b <= 57 then -- 0-9
+  if is_digit(b) then -- 0-9
     return 1
   elseif b == 46 then -- "."
     return 2
@@ -177,18 +257,16 @@ local function starts_with_0x(input, index)
 end
 
 local function is_hex_char(char)
-  return (48 <= char and char <= 57) -- 0-9
-    or (65 <= char and char <= 70) -- A-F
+  return (65 <= char and char <= 70) -- A-F
     or (97 <= char and char <= 102) -- a-f
+    or is_digit(char)
 end
 
-local function is_number_continuation(char)
-  return char ~= nil
-    and (
-      (48 <= char and char <= 57) -- 0-9
-      or is_identifier_start(char)
-      or char == 46 -- .
-    )
+local function is_number_continuation(s, index)
+  if index > #s then return false end
+  local char = byte(s, index)
+  -- . or identifier part (digit or letter or underscore)
+  return char == 46 or is_identifier_part(char)
 end
 
 local function scan_number(input, index)
@@ -232,7 +310,7 @@ local quote_string_trans_table = {
 local function quote_string_alphabet(del)
   return function(char)
     if char == del then return 1 end
-    if 48 <= char and char <= 57 then return 2 end
+    if is_digit(char) then return 2 end
     if
       char == 97
       or char == 98
@@ -359,9 +437,9 @@ local function scan_token(input, index)
     local t = keywords[sub(input, index, end_ind - 1)]
     if t == nil then t = "Identifier" end
     return t, end_ind
-  elseif 48 <= first and first <= 57 then
+  elseif is_digit(first) then
     local end_ind = scan_number(input, index)
-    if end_ind > index and not is_number_continuation(byte(input, end_ind)) then
+    if end_ind > index and not is_number_continuation(input, end_ind) then
       return "NumberLiteral", end_ind
     end
     return format("malformed number near %d", index), index
@@ -370,7 +448,7 @@ local function scan_token(input, index)
     if end_ind > index then return "VarargLiteral", end_ind end
     end_ind = scan_number(input, index)
     if end_ind > index then
-      if not is_number_continuation(byte(input, end_ind)) then
+      if not is_number_continuation(input, end_ind) then
         return "NumberLiteral", end_ind
       end
       return format("malformed number near %d", index), index
