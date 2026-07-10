@@ -21,30 +21,36 @@ local token_types = {
   ["Comment"] = true,
 }
 
+-- Keyword keys use a collision-free base-26 encoding. Starting at 1 keeps
+-- leading "a" bytes significant even though "a" maps to 0:
+--   key = 1
+--   key = key * 26 + byte - byte("a") -- for each lowercase byte
+-- Identifiers considered here are at most 8 bytes, so every key is an exact
+-- integer in Lua's default double-precision number representation.
 local keywords = {
-  ["false"] = "BooleanLiteral",
-  ["true"] = "BooleanLiteral",
+  [14174164] = "BooleanLiteral", -- false
+  [802936] = "BooleanLiteral", -- true
 
-  ["nil"] = "NilLiteral",
+  [26583] = "NilLiteral", -- nil
 
-  ["and"] = "Keyword",
-  ["break"] = "Keyword",
-  ["do"] = "Keyword",
-  ["else"] = "Keyword",
-  ["elseif"] = "Keyword",
-  ["end"] = "Keyword",
-  ["for"] = "Keyword",
-  ["function"] = "Keyword",
-  ["if"] = "Keyword",
-  ["in"] = "Keyword",
-  ["local"] = "Keyword",
-  ["not"] = "Keyword",
-  ["or"] = "Keyword",
-  ["repeat"] = "Keyword",
-  ["return"] = "Keyword",
-  ["then"] = "Keyword",
-  ["until"] = "Keyword",
-  ["while"] = "Keyword",
+  [17917] = "Keyword", -- and
+  [12639858] = "Keyword", -- break
+  [768] = "Keyword", -- do
+  [535188] = "Keyword", -- else
+  [361787301] = "Keyword", -- elseif
+  [20621] = "Keyword", -- end
+  [21337] = "Keyword", -- for
+  [255320142545] = "Keyword", -- function
+  [889] = "Keyword", -- if
+  [897] = "Keyword", -- in
+  [17155539] = "Keyword", -- local
+  [26747] = "Keyword", -- not
+  [1057] = "Keyword", -- or
+  [512993435] = "Keyword", -- repeat
+  [513074991] = "Keyword", -- return
+  [795769] = "Keyword", -- then
+  [21262447] = "Keyword", -- until
+  [22063578] = "Keyword", -- while
 }
 
 local escaped2char = {
@@ -75,10 +81,21 @@ local function is_identifier_part(c)
 end
 
 local function scan_identifier_keyword(input, index)
+  local first = byte(input, index)
+  local keyword_key = 97 <= first and first <= 122 and 26 + first - 97 or 0
+
   for i = index + 1, #input do
-    if not is_identifier_part(byte(input, i)) then return i end
+    local char = byte(input, i)
+    if not is_identifier_part(char) then return i, keyword_key end
+    if keyword_key ~= 0 then
+      if i - index < 8 and 97 <= char and char <= 122 then
+        keyword_key = keyword_key * 26 + char - 97
+      else
+        keyword_key = 0
+      end
+    end
   end
-  return #input + 1
+  return #input + 1, keyword_key
 end
 
 local function skip_whitespaces(input, index)
@@ -388,12 +405,6 @@ local function scan_vararg(input, index)
     or index
 end
 
-local keyword_max_length = 0
-for keyword in pairs(keywords) do
-  keyword_max_length = math.max(keyword_max_length, #keyword)
-end
-assert(keyword_max_length <= 8)
-
 local function scan_token(input, index)
   local length = #input
   if index > length then return "EOF", index end
@@ -406,10 +417,11 @@ local function scan_token(input, index)
 
   -- dispatch based on first character
   if is_identifier_start(first) then
-    local end_ind = scan_identifier_keyword(input, index)
-    if end_ind - index > 8 then return "Identifier", end_ind end
-    local id = sub(input, index, end_ind - 1)
-    local t = keywords[id]
+    local end_ind, keyword_key = scan_identifier_keyword(input, index)
+    if end_ind - index > 8 or keyword_key == 0 then
+      return "Identifier", end_ind
+    end
+    local t = keywords[keyword_key]
     if t == nil then t = "Identifier" end
     return t, end_ind
   elseif is_digit(first) then
