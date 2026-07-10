@@ -120,18 +120,195 @@ function TestLexerValid:testVarargAndLongComment()
   })
 end
 
+function TestLexerValid:testAllKeywordsAndKeywordLikeIdentifiers()
+  local source = table.concat({
+    "and",
+    "break",
+    "do",
+    "else",
+    "elseif",
+    "end",
+    "false",
+    "for",
+    "function",
+    "if",
+    "in",
+    "local",
+    "nil",
+    "not",
+    "or",
+    "repeat",
+    "return",
+    "then",
+    "true",
+    "until",
+    "while",
+    "android",
+    "True",
+    "local_",
+    "abcdefgh",
+    "abcdefghi",
+    "_name",
+    "name2",
+  }, " ")
+
+  local tokens = lex(source)
+  local expected_types = {
+    "Keyword",
+    "Keyword",
+    "Keyword",
+    "Keyword",
+    "Keyword",
+    "Keyword",
+    "BooleanLiteral",
+    "Keyword",
+    "Keyword",
+    "Keyword",
+    "Keyword",
+    "Keyword",
+    "NilLiteral",
+    "Keyword",
+    "Keyword",
+    "Keyword",
+    "Keyword",
+    "Keyword",
+    "BooleanLiteral",
+    "Keyword",
+    "Keyword",
+    "Identifier",
+    "Identifier",
+    "Identifier",
+    "Identifier",
+    "Identifier",
+    "Identifier",
+    "Identifier",
+  }
+
+  for i, expected_type in ipairs(expected_types) do
+    luaunit.assertEquals(tokens[i][1], expected_type)
+  end
+  luaunit.assertEquals(tokens[#tokens], { "EOF" })
+end
+
+function TestLexerValid:testPunctuatorsAndDotPrefixes()
+  luaunit.assertEquals(
+    lex("+ - * / % ^ # == ~= <= >= < > = ( ) { } [ ] ; : , . .. ..."),
+    {
+      { "Punctuator", "+" },
+      { "Punctuator", "-" },
+      { "Punctuator", "*" },
+      { "Punctuator", "/" },
+      { "Punctuator", "%" },
+      { "Punctuator", "^" },
+      { "Punctuator", "#" },
+      { "Punctuator", "==" },
+      { "Punctuator", "~=" },
+      { "Punctuator", "<=" },
+      { "Punctuator", ">=" },
+      { "Punctuator", "<" },
+      { "Punctuator", ">" },
+      { "Punctuator", "=" },
+      { "Punctuator", "(" },
+      { "Punctuator", ")" },
+      { "Punctuator", "{" },
+      { "Punctuator", "}" },
+      { "Punctuator", "[" },
+      { "Punctuator", "]" },
+      { "Punctuator", ";" },
+      { "Punctuator", ":" },
+      { "Punctuator", "," },
+      { "Punctuator", "." },
+      { "Punctuator", ".." },
+      { "VarargLiteral", "..." },
+      { "EOF" },
+    }
+  )
+end
+
+function TestLexerValid:testQuotedStringEscapes()
+  local source = [==['\a\b\f\n\r\t\v\\\'\"' "\065\66\067\0\255\q"]==]
+  luaunit.assertEquals(lex(source), {
+    { "StringLiteral", "\a\b\f\n\r\t\v\\'\"" },
+    { "StringLiteral", "ABC" .. string.char(0, 255) .. "q" },
+    { "EOF" },
+  })
+end
+
+function TestLexerValid:testEscapedAndLongStringNewlinesAreNormalized()
+  luaunit.assertEquals(lex('"a\\\r\nb\\\n\rc\\\rd"'), {
+    { "StringLiteral", "a\nb\nc\nd" },
+    { "EOF" },
+  })
+
+  luaunit.assertEquals(lex("[=[\r\nfirst\rsecond\n\rthird]=]"), {
+    { "StringLiteral", "first\nsecond\nthird" },
+    { "EOF" },
+  })
+end
+
+function TestLexerValid:testNumberFormsAndBoundaries()
+  luaunit.assertEquals(lex("0 00 123. .25 2e3 2E-3 2e+3 0XfF"), {
+    { "NumberLiteral", 0 },
+    { "NumberLiteral", 0 },
+    { "NumberLiteral", 123 },
+    { "NumberLiteral", 0.25 },
+    { "NumberLiteral", 2000 },
+    { "NumberLiteral", 0.002 },
+    { "NumberLiteral", 2000 },
+    { "NumberLiteral", 255 },
+    { "EOF" },
+  })
+end
+
+function TestLexerValid:testWhitespaceAndCommentBoundaries()
+  luaunit.assertEquals(lex("\t\v\f\r\n -- one\r-- two\n-- final"), {
+    { "Comment", "-- one" },
+    { "Comment", "-- two" },
+    { "Comment", "-- final" },
+    { "EOF" },
+  })
+end
+
+function TestLexerValid:testLongStringUsesMatchingDelimiterLevel()
+  luaunit.assertEquals(lex("[==[left ]=] right ]==]"), {
+    { "StringLiteral", "left ]=] right " },
+    { "EOF" },
+  })
+end
+
+function TestLexerValid:testScanTokenWithoutValues()
+  local token_type, next_index, value = lexer.scan_token("  true", 1)
+  luaunit.assertEquals(token_type, "BooleanLiteral")
+  luaunit.assertEquals(next_index, 7)
+  luaunit.assertNil(value)
+
+  token_type, next_index = lexer.scan_token("   ", 1)
+  luaunit.assertEquals(token_type, "EOF")
+  luaunit.assertEquals(next_index, 4)
+
+  token_type, next_index = lexer.scan_token("", 1)
+  luaunit.assertEquals(token_type, "EOF")
+  luaunit.assertEquals(next_index, 1)
+end
+
 TestLexerInvalid = {}
 
 function TestLexerInvalid:testMalformedNumbers()
   assert_lex_error("local x = 0x", "malformed number near 11")
   assert_lex_error("return 1e+", "malformed number near 8")
   assert_lex_error("return 123abc", "malformed number near 8")
+  assert_lex_error("1.2.3", "malformed number near 1")
+  assert_lex_error("0xg", "malformed number near 1")
+  assert_lex_error("0xffz", "malformed number near 1")
+  assert_lex_error("1e", "malformed number near 1")
 end
 
 function TestLexerInvalid:testMalformedQuotedStrings()
   assert_lex_error('local x = "unterminated', "malformed string near 11")
   assert_lex_error("return 'line\nbreak'", "malformed string near 8")
   assert_lex_error('return "\\999"', "malformed string near 8")
+  assert_lex_error('"ends with \\', "malformed string near 1")
+  assert_lex_error("'carriage\rreturn'", "malformed string near 1")
 end
 
 function TestLexerInvalid:testMalformedLongStringsAndComments()
@@ -141,6 +318,15 @@ end
 
 function TestLexerInvalid:testUnknownCharacter()
   assert_lex_error("local x = @", "unknown token near 11")
+end
+
+function TestLexerInvalid:testLongStringLikeBracketIsStillPunctuation()
+  luaunit.assertEquals(lex("[=x"), {
+    { "Punctuator", "[" },
+    { "Punctuator", "=" },
+    { "Identifier", "x" },
+    { "EOF" },
+  })
 end
 
 os.exit(luaunit.LuaUnit.run())
