@@ -343,16 +343,14 @@ local function scan_punctuator(input, index)
 end
 
 local function scan_vararg(input, index)
-  local length = #input
-  if
-    index + 2 > length
-    or byte(input, index) ~= 46
-    or byte(input, index + 1) ~= 46
-    or byte(input, index + 2) ~= 46
-  then
-    return index
-  end
-  return index + 3
+  return (
+    index + 2 <= #input
+    and byte(input, index) == 46 -- "."
+    and byte(input, index + 1) == 46
+    and byte(input, index + 2) == 46
+  )
+      and index + 3
+    or index
 end
 
 local function scan_token(input, index)
