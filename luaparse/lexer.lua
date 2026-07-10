@@ -401,6 +401,7 @@ local function scan_token(input, index)
   -- dispatch based on first character
   if is_identifier_start(first) then
     local end_ind = scan_identifier_keyword(input, index)
+    if end_ind - index > 8 then return "Identifier", end_ind end
     local id = sub(input, index, end_ind - 1)
     local t = keywords[id]
     if t == nil then t = "Identifier" end
