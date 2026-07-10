@@ -227,56 +227,50 @@ local function scan_quote_string(input, index, need_value)
   return index, "unfinished string"
 end
 
--- requirements:
--- 1. start state must be 1
--- 2. accept states must be >= parameter `accept`
--- 3. alphabet_range is a function return alphabet by byte value
--- 4. invalid state is represented by 0
--- returns the index after the last accepted character or `index` if not exists
-local function execute_state_machine(s, index, trans, alphabet_range, accept)
-  local state = 1
-  local last_accept = index
-
-  for i = index, #s do
-    local b = byte(s, i)
-    local alphabet = alphabet_range(b)
-
-    if alphabet == 0 then break end
-    state = trans[state][alphabet]
-    if state == 0 then break end
-    if state >= accept then last_accept = i + 1 end
-  end
-  return last_accept
-end
-
 -- based on regexp '(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?'
--- \d (i.e. [0-9]) is alphabet 1
--- \. (i.e. the literal ".") is alphabet 2
--- [eE] (i.e. "e" or "E" for exponent) is alphabet 3
--- [-+] (i.e. the positive or negative sign "+" or "-") is alphabet 4
--- accept states: 5, 6, 7, 8
-local decimal_trans_table = {
-  { 5, 2, 0, 0 }, -- 1 start
-  { 7, 0, 0, 0 }, -- 2 leading dot
-  { 8, 0, 0, 4 }, -- 3 exponent marker
-  { 8, 0, 0, 0 }, -- 4 exponent sign
-  { 5, 6, 3, 0 }, -- 5 digits
-  { 6, 0, 3, 0 }, -- 6 digits dot
-  { 7, 0, 3, 0 }, -- 7 dot digits
-  { 8, 0, 0, 0 }, -- 8 exponent digits
-}
+local function scan_decimal(input, index)
+  local length = #input
+  local i = index
 
-local function decimal_alphabet(b)
-  if is_digit(b) then -- 0-9
-    return 1
-  elseif b == 46 then -- "."
-    return 2
-  elseif b == 69 or b == 101 then -- "E" or "e"
-    return 3
-  elseif b == 43 or b == 45 then -- "+" or "-"
-    return 4
+  if byte(input, i) == 46 then -- leading "."
+    i = i + 1
+    if i > length or not is_digit(byte(input, i)) then return index end
+    repeat
+      i = i + 1
+    until i > length or not is_digit(byte(input, i))
+  else
+    if i > length or not is_digit(byte(input, i)) then return index end
+    repeat
+      i = i + 1
+    until i > length or not is_digit(byte(input, i))
+
+    if i <= length and byte(input, i) == 46 then -- optional "."
+      i = i + 1
+      while i <= length and is_digit(byte(input, i)) do
+        i = i + 1
+      end
+    end
   end
-  return 0
+
+  local mantissa_end = i
+  if i <= length then
+    local char = byte(input, i)
+    if char == 69 or char == 101 then -- "E" or "e"
+      i = i + 1
+      if i <= length then
+        char = byte(input, i)
+        if char == 43 or char == 45 then i = i + 1 end -- "+" or "-"
+      end
+
+      -- Preserve the longest accepted prefix when the exponent is unfinished.
+      if i > length or not is_digit(byte(input, i)) then return mantissa_end end
+      repeat
+        i = i + 1
+      until i > length or not is_digit(byte(input, i))
+    end
+  end
+
+  return i
 end
 
 local function starts_with_0x(input, index)
@@ -312,13 +306,7 @@ local function scan_number(input, index)
     return i > index + 2 and i or index
   end
 
-  return execute_state_machine(
-    input,
-    index,
-    decimal_trans_table,
-    decimal_alphabet,
-    5
-  )
+  return scan_decimal(input, index)
 end
 
 local function scan_comment(input, index)
@@ -401,12 +389,16 @@ local function scan_vararg(input, index)
 end
 
 local function scan_token(input, index)
-  index = skip_whitespaces(input, index)
   local length = #input
   if index > length then return "EOF", index end
+  local first = byte(input, index)
+  if (9 <= first and first <= 13) or first == 32 then
+    index = skip_whitespaces(input, index + 1)
+    if index > length then return "EOF", index end
+    first = byte(input, index)
+  end
 
   -- dispatch based on first character
-  local first = byte(input, index)
   if is_identifier_start(first) then
     local end_ind = scan_identifier_keyword(input, index)
     local id = sub(input, index, end_ind - 1)
@@ -462,10 +454,15 @@ local function scan_token(input, index)
 end
 
 local function scan_token_value(input, index)
-  index = skip_whitespaces(input, index)
-  if index > #input then return "EOF", index end
-
+  local length = #input
+  if index > length then return "EOF", index end
   local first = byte(input, index)
+  if (9 <= first and first <= 13) or first == 32 then
+    index = skip_whitespaces(input, index + 1)
+    if index > length then return "EOF", index end
+    first = byte(input, index)
+  end
+
   if first == 34 or first == 39 then -- " or '
     local end_ind, value = scan_quote_string(input, index, true)
     if end_ind > index then return "StringLiteral", end_ind, value end
