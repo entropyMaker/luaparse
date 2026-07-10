@@ -388,6 +388,12 @@ local function scan_vararg(input, index)
     or index
 end
 
+local keyword_max_length = 0
+for keyword in pairs(keywords) do
+  keyword_max_length = math.max(keyword_max_length, #keyword)
+end
+assert(keyword_max_length <= 8)
+
 local function scan_token(input, index)
   local length = #input
   if index > length then return "EOF", index end
