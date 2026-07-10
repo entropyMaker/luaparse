@@ -67,21 +67,12 @@ local function scan_identifier_keyword(input, index)
 end
 
 local function skip_whitespaces(input, index)
-  local length = #input
-  local i = index
-
-  while i <= length do
+  for i = index, #input do
     local char = byte(input, i)
-    if
-      not (9 <= char and char <= 13) -- tab, LF, vertical tab, form feed, CR
-      and char ~= 32 -- space
-    then
-      break
-    end
-    i = i + 1
+    -- tab, LF, vertical tab, form feed, CR and space
+    if not (9 <= char and char <= 13) and char ~= 32 then return i end
   end
-
-  return i
+  return #input + 1
 end
 
 local function scan_long_string_opener(input, index)
