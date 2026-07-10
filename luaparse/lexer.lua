@@ -130,7 +130,7 @@ local function scan_long_string(input, index)
     end
   end
 
-  return index
+  return index, "malformed long string"
 end
 
 -- in a quoted string, a character is used as-is if it is not
@@ -372,10 +372,13 @@ local function scan_comment(input, index)
     return index
   end
 
-  local long_comment_end = scan_long_string(input, index + 2)
-  if long_comment_end > index + 2 then return long_comment_end end
+  local comment_start = index + 2
+  local long_comment_end, long_string_error =
+    scan_long_string(input, comment_start)
+  if long_string_error ~= nil then return index, "malformed long comment" end
+  if long_comment_end > comment_start then return long_comment_end end
 
-  for i = index + 2, length do
+  for i = comment_start, length do
     local char = byte(input, i)
     -- \n or \r
     if char == 10 or char == 13 then return i end
@@ -470,30 +473,19 @@ local function scan_token(input, index)
     if end_ind > index then return "Punctuator", end_ind end
     return format("unknown token after . near %d", index), index
   elseif first == 45 then -- -
-    local comment_start = index + 2
-    if
-      index < length
-      and byte(input, index + 1) == 45 -- -
-      and scan_long_string_opener(input, comment_start) > comment_start
-    then
-      local end_ind = scan_long_string(input, comment_start)
-      if end_ind > comment_start then return "Comment", end_ind end
-      return format("malformed long comment near %d", index), index
+    local end_ind, comment_error = scan_comment(input, index)
+    if comment_error ~= nil then
+      return format("%s near %d", comment_error, index), index
     end
-
-    local end_ind = scan_comment(input, index)
     if end_ind > index then return "Comment", end_ind end
     end_ind = scan_punctuator(input, index)
     if end_ind > index then return "Punctuator", end_ind end
     return format("unknown token after - near %d", index), index
   elseif first == 91 then -- [
-    if scan_long_string_opener(input, index) > index then
-      local end_ind = scan_long_string(input, index)
-      if end_ind > index then return "StringLiteral", end_ind end
-      return format("malformed long string near %d", index), index
+    local end_ind, long_string_error = scan_long_string(input, index)
+    if long_string_error ~= nil then
+      return format("%s near %d", long_string_error, index), index
     end
-
-    local end_ind = scan_long_string(input, index)
     if end_ind > index then return "StringLiteral", end_ind end
     end_ind = scan_punctuator(input, index)
     if end_ind > index then return "Punctuator", end_ind end
