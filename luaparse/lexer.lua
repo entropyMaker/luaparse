@@ -117,10 +117,10 @@ end
 
 -- requirements:
 -- 1. start state must be 1
--- 2. accept states must be >= accept
--- 3. #alphabet_range == #trans[1] * 2
+-- 2. accept states must be >= parameter `accept`
+-- 3. alphabet_range is a function return alphabet by byte value
 -- 4. invalid state is represented by 0
--- 5. alphabet_range is a function return alphabet by byte value
+-- returns the index after the last accepted character or `index` if not exists
 local function execute_state_machine(s, index, trans, alphabet_range, accept)
   local state = 1
   local last_accept = index
