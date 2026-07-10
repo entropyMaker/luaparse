@@ -133,6 +133,12 @@ local function scan_long_string(input, index)
   return index
 end
 
+-- in a quoted string, a character is used as-is if it is not
+-- corresponding quote, backslash, newline, and carriage return
+local function is_as_is_char(char, quote)
+  return char ~= quote and char ~= 92 and char ~= 10 and char ~= 13
+end
+
 -- there are 3 cases:
 -- 1. invalid quoted string literal, return index, reason
 -- 2. need_value is true,
@@ -149,9 +155,7 @@ local function scan_quote_string_manual(input, index, need_value)
     local char = byte(input, i)
     if char == quote then
       return i + 1, (bytes and table_concat(bytes) or "")
-    end
-
-    if char == 92 then -- the escape character
+    elseif char == 92 then -- the escape character
       i = i + 1
       if i > length then return index, "escape character at end of input" end
       local escaped = byte(input, i)
@@ -160,7 +164,7 @@ local function scan_quote_string_manual(input, index, need_value)
         if bytes then bytes[#bytes + 1] = single_escaped end
         i = i + 1
       elseif escaped == 10 or escaped == 13 then -- newline or carriage return
-        if i >= length then return index, "unfinished string" end
+        if i >= length then break end
         -- lua normalizes LF, CR, CRLF and LFCR to a single LF
         if bytes then bytes[#bytes + 1] = "\n" end
         local another = escaped == 10 and 13 or 10
@@ -185,10 +189,19 @@ local function scan_quote_string_manual(input, index, need_value)
         i = i + 1
       end
     elseif char == 10 or char == 13 then -- newline or carriage return
-      return index, "unfinished string"
+      break
     else
-      if bytes then bytes[#bytes + 1] = chr(char) end
-      i = i + 1
+      if bytes then
+        local j = i + 1
+        while j <= length and is_as_is_char(byte(input, j), quote) do
+          j = j + 1
+        end
+        if j > length then break end
+        bytes[#bytes + 1] = sub(input, i, j - 1)
+        i = j
+      else
+        i = i + 1
+      end
     end
   end
 
