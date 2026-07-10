@@ -400,16 +400,10 @@ local function scan_vararg(input, index)
     or index
 end
 
-local function scan_token(input, index, need_value)
+local function scan_token(input, index)
   index = skip_whitespaces(input, index)
   local length = #input
   if index > length then return "EOF", index end
-
-  local function token_result(t, end_ind, value)
-    if not need_value then return t, end_ind end
-    if value == nil then value = sub(input, index, end_ind - 1) end
-    return t, end_ind, value
-  end
 
   -- dispatch based on first character
   local first = byte(input, index)
@@ -418,75 +412,88 @@ local function scan_token(input, index, need_value)
     local id = sub(input, index, end_ind - 1)
     local t = keywords[id]
     if t == nil then t = "Identifier" end
-    if t == "BooleanLiteral" then
-      return token_result(t, end_ind, first == 116) -- true starts with "t"
-    end
-    return token_result(t, end_ind, id)
+    return t, end_ind
   elseif is_digit(first) then
     local end_ind = scan_number(input, index)
     if end_ind > index and not is_number_continuation(input, end_ind) then
-      return token_result(
-        "NumberLiteral",
-        end_ind,
-        tonumber(sub(input, index, end_ind - 1))
-      )
+      return "NumberLiteral", end_ind
     end
     return format("malformed number near %d", index), index
   elseif first == 46 then -- .
     local end_ind = scan_vararg(input, index)
-    if end_ind > index then return token_result("VarargLiteral", end_ind) end
+    if end_ind > index then return "VarargLiteral", end_ind end
     end_ind = scan_number(input, index)
     if end_ind > index then
       if not is_number_continuation(input, end_ind) then
-        return token_result(
-          "NumberLiteral",
-          end_ind,
-          tonumber(sub(input, index, end_ind - 1))
-        )
+        return "NumberLiteral", end_ind
       end
       return format("malformed number near %d", index), index
     end
     end_ind = scan_punctuator(input, index)
-    if end_ind > index then return token_result("Punctuator", end_ind) end
+    if end_ind > index then return "Punctuator", end_ind end
     return format("unknown token after . near %d", index), index
   elseif first == 45 then -- -
     local end_ind, comment_error = scan_comment(input, index)
     if comment_error ~= nil then
       return format("%s near %d", comment_error, index), index
     end
-    if end_ind > index then return token_result("Comment", end_ind) end
+    if end_ind > index then return "Comment", end_ind end
     end_ind = scan_punctuator(input, index)
-    if end_ind > index then return token_result("Punctuator", end_ind) end
+    if end_ind > index then return "Punctuator", end_ind end
     return format("unknown token after - near %d", index), index
   elseif first == 91 then -- [
     local end_ind, long_string_error = scan_long_string(input, index)
     if long_string_error ~= nil then
       return format("%s near %d", long_string_error, index), index
     end
-    if end_ind > index then
-      return token_result(
-        "StringLiteral",
-        end_ind,
-        need_value and long_string_value(input, index, end_ind) or nil
-      )
-    end
+    if end_ind > index then return "StringLiteral", end_ind end
     end_ind = scan_punctuator(input, index)
-    if end_ind > index then return token_result("Punctuator", end_ind) end
+    if end_ind > index then return "Punctuator", end_ind end
     return format("unknown token after [ near %d", index), index
   elseif first == 34 or first == 39 then -- " or '
-    local end_ind, value = scan_quote_string(input, index, need_value)
-    if end_ind > index then
-      return token_result("StringLiteral", end_ind, value)
-    end
+    local end_ind = scan_quote_string(input, index, false)
+    if end_ind > index then return "StringLiteral", end_ind end
     return format("malformed string near %d", index), index
   else
     local end_ind = scan_punctuator(input, index)
-    if end_ind > index then return token_result("Punctuator", end_ind) end
+    if end_ind > index then return "Punctuator", end_ind end
     return format("unknown token near %d", index), index
   end
+end
+
+local function scan_token_value(input, index)
+  index = skip_whitespaces(input, index)
+  if index > #input then return "EOF", index end
+
+  local first = byte(input, index)
+  if first == 34 or first == 39 then -- " or '
+    local end_ind, value = scan_quote_string(input, index, true)
+    if end_ind > index then return "StringLiteral", end_ind, value end
+    return format("malformed string near %d", index), index
+  elseif first == 91 then -- [
+    local end_ind, long_string_error = scan_long_string(input, index)
+    if long_string_error ~= nil then
+      return format("%s near %d", long_string_error, index), index
+    end
+    if end_ind > index then
+      return "StringLiteral", end_ind, long_string_value(input, index, end_ind)
+    end
+  end
+
+  local t, end_ind = scan_token(input, index)
+  if not token_types[t] or t == "EOF" then return t, end_ind end
+
+  local value = sub(input, index, end_ind - 1)
+  if t == "NumberLiteral" then
+    value = tonumber(value)
+  elseif t == "BooleanLiteral" then
+    value = first == 116 -- true starts with "t"
+  end
+  return t, end_ind, value
 end
 
 return {
   token_types = token_types,
   scan_token = scan_token,
+  scan_token_value = scan_token_value,
 }
