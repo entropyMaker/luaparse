@@ -56,14 +56,10 @@ local function is_identifier_part(c)
 end
 
 local function scan_identifier_keyword(input, index)
-  local length = #input
-  local i = index + 1
-
-  while i <= length and is_identifier_part(byte(input, i)) do
-    i = i + 1
+  for i = index + 1, #input do
+    if not is_identifier_part(byte(input, i)) then return i end
   end
-
-  return i
+  return #input + 1
 end
 
 local function skip_whitespaces(input, index)
@@ -288,14 +284,12 @@ local function scan_comment(input, index)
   local long_comment_end = scan_long_string(input, index + 2)
   if long_comment_end > index + 2 then return long_comment_end end
 
-  local i = index + 2
-  while i <= length do
+  for i = index + 2, length do
     local char = byte(input, i)
-    if char == 10 or char == 13 then break end
-    i = i + 1
+    -- \n or \r
+    if char == 10 or char == 13 then return i end
   end
-
-  return i
+  return length + 1
 end
 
 local function scan_punctuator(input, index)
