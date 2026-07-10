@@ -164,7 +164,7 @@ end
 --   return index after close quote character, string value of the quoted string
 -- 3. need_value is false,
 --   return index after close quote character and empty string (for consistency)
-local function scan_quote_string_manual(input, index, need_value)
+local function scan_quote_string(input, index, need_value)
   local quote = byte(input, index)
   local length = #input
   local bytes = need_value and {} or nil
@@ -415,12 +415,13 @@ local function scan_token(input, index, need_value)
   local first = byte(input, index)
   if is_identifier_start(first) then
     local end_ind = scan_identifier_keyword(input, index)
-    local t = keywords[sub(input, index, end_ind - 1)]
+    local id = sub(input, index, end_ind - 1)
+    local t = keywords[id]
     if t == nil then t = "Identifier" end
     if t == "BooleanLiteral" then
       return token_result(t, end_ind, first == 116) -- true starts with "t"
     end
-    return token_result(t, end_ind)
+    return token_result(t, end_ind, id)
   elseif is_digit(first) then
     local end_ind = scan_number(input, index)
     if end_ind > index and not is_number_continuation(input, end_ind) then
@@ -473,7 +474,7 @@ local function scan_token(input, index, need_value)
     if end_ind > index then return token_result("Punctuator", end_ind) end
     return format("unknown token after [ near %d", index), index
   elseif first == 34 or first == 39 then -- " or '
-    local end_ind, value = scan_quote_string_manual(input, index, need_value)
+    local end_ind, value = scan_quote_string(input, index, need_value)
     if end_ind > index then
       return token_result("StringLiteral", end_ind, value)
     end
