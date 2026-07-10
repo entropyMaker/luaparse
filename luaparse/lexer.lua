@@ -432,23 +432,24 @@ local function scan_token(input, index)
     if end_ind > index then return "Punctuator", end_ind end
     return format("unknown token after . near %d", index), index
   elseif first == 45 then -- -
-    local end_ind, comment_error = scan_comment(input, index)
-    if comment_error ~= nil then
-      return format("%s near %d", comment_error, index), index
+    if index < length and byte(input, index + 1) == 45 then -- --
+      local end_ind, comment_error = scan_comment(input, index)
+      if comment_error ~= nil then
+        return format("%s near %d", comment_error, index), index
+      end
+      return "Comment", end_ind
     end
-    if end_ind > index then return "Comment", end_ind end
-    end_ind = scan_punctuator(input, index)
-    if end_ind > index then return "Punctuator", end_ind end
-    return format("unknown token after - near %d", index), index
+    return "Punctuator", index + 1
   elseif first == 91 then -- [
-    local end_ind, long_string_error = scan_long_string(input, index)
-    if long_string_error ~= nil then
-      return format("%s near %d", long_string_error, index), index
+    local second = index < length and byte(input, index + 1) or -1
+    if second == 91 or second == 61 then -- [ or =
+      local end_ind, long_string_error = scan_long_string(input, index)
+      if long_string_error ~= nil then
+        return format("%s near %d", long_string_error, index), index
+      end
+      if end_ind > index then return "StringLiteral", end_ind end
     end
-    if end_ind > index then return "StringLiteral", end_ind end
-    end_ind = scan_punctuator(input, index)
-    if end_ind > index then return "Punctuator", end_ind end
-    return format("unknown token after [ near %d", index), index
+    return "Punctuator", index + 1
   elseif first == 34 or first == 39 then -- " or '
     local end_ind = scan_quote_string(input, index, false)
     if end_ind > index then return "StringLiteral", end_ind end
