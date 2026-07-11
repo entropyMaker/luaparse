@@ -345,7 +345,7 @@ local function scan_quote_string(input, index, need_value, features)
   while i <= length do
     local char = byte(input, i)
     if char == quote then
-      return i + 1, (values and table_concat(values) or "")
+      return i + 1, values and table_concat(values) or ""
     elseif char == 92 then -- the escape character
       i = i + 1
       if i > length then return index, "escape character at end of input" end
