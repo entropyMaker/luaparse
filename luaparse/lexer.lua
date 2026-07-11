@@ -489,20 +489,19 @@ end
 local function scan_number(input, index, features)
   local i, has_fraction
 
-  if starts_with_0(input, index, 88, 120) then -- "x" or "X"
+  if starts_with_0(input, index, 88, 120) then -- "0x" or "0X"
     local mantissa_start = index + 2
     if features.hex_floats then
-      local has_radix_point
-      i, has_radix_point = scan_mantissa(input, mantissa_start, is_hex_digit)
-      if i == mantissa_start then return index end
-      local exponent_start = i
-      i = scan_exponent(input, exponent_start, 80, 112) -- "P" or "p"
-      has_fraction = has_radix_point or i > exponent_start
+      local mantissa_end, has_radix_point =
+        scan_mantissa(input, mantissa_start, is_hex_digit)
+      if mantissa_end == mantissa_start then return index end
+      i = scan_exponent(input, mantissa_end, 80, 112) -- "P" or "p"
+      has_fraction = has_radix_point or i > mantissa_end
     else
       i = scan_digits(input, mantissa_start, is_hex_digit)
       if i == mantissa_start then return index end
     end
-  elseif starts_with_0(input, index, 66, 98) then -- "b" or "B"
+  elseif starts_with_0(input, index, 66, 98) then -- "0b" or "0B"
     if not features.binary_numbers then return index end
     local digit_start = index + 2
     i = scan_digits(input, digit_start, is_binary_digit)
@@ -637,7 +636,13 @@ local function scan_token(features, input, index)
     if t == nil then t = "Identifier" end
     return t, end_ind
   elseif is_digit(first) then
-    local end_ind = scan_number(input, index, features)
+    -- plain decimal-integer fast path
+    local end_ind = scan_digits(input, index + 1, is_digit)
+    if not is_number_continuation(input, end_ind, features) then
+      return "NumberLiteral", end_ind
+    end
+
+    end_ind = scan_number(input, index, features)
     if
       end_ind > index and not is_number_continuation(input, end_ind, features)
     then

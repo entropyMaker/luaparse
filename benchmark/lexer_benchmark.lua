@@ -86,6 +86,7 @@ io.write(string.format("Bytes/pass:   %d\n", bytes_per_pass))
 io.write(string.format("Total bytes:  %d\n", total_bytes))
 io.write(string.format("Tokens:       %d\n", token_count))
 io.write(string.format("Elapsed:      %.6f s\n", elapsed))
+io.write(string.format("Tokens/s:     %.2f\n", token_count / elapsed))
 io.write(
   string.format(
     "Throughput:   %.2f MiB/s\n",

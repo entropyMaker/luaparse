@@ -406,6 +406,14 @@ function TestLexerVersions:testStandardNumberProfiles()
   assert_lex_error("0x1p2", "malformed number near 1", lua51)
   assert_lex_error("0x1p", "malformed number near 1", lua52)
   assert_lex_error("0x.p1", "malformed number near 1", lua52)
+
+  local empty_hex_mantissas = { "0x", "0x,", "0x ", "0xp1" }
+  for _, version in ipairs({ "5.2", "5.3", "5.4", "5.5" }) do
+    local scanner = lexer.new({ lua_version = version })
+    for _, source in ipairs(empty_hex_mantissas) do
+      assert_lex_error(source, "malformed number near 1", scanner)
+    end
+  end
 end
 
 function TestLexerVersions:testLuaJITNumberForms()
