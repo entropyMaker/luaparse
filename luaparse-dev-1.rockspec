@@ -6,10 +6,10 @@ source = {
 }
 
 description = {
-  summary = "Pure Lua lexer and parser for Lua 5.1",
+  summary = "Pure Lua lexer and parser for multiple Lua versions",
   detailed = [[
 luaparse is a pure Lua lexer and parser for the Lua programming language,
-currently targeting Lua 5.1.
+with a version-configurable lexer for Lua 5.1 through Lua 5.5 and LuaJIT.
 ]],
   homepage = "https://github.com/entropyMaker/luaparse",
   license = "MIT",

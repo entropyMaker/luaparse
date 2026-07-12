@@ -2,9 +2,14 @@ local byte = string.byte
 local chr = string.char
 local sub = string.sub
 local gsub = string.gsub
+local find = string.find
 local format = string.format
+local floor = math.floor
 local table_concat = table.concat
+local error = error
+local setmetatable = setmetatable
 local tonumber = tonumber
+local tostring = tostring
 
 -- Token types: EOF, BooleanLiteral, NumberLiteral, StringLiteral, NilLiteral,
 -- VarargLiteral, Keyword, Identifier, Punctuator, Comment.
@@ -19,6 +24,71 @@ local token_types = {
   ["Identifier"] = true,
   ["Punctuator"] = true,
   ["Comment"] = true,
+}
+
+local feature_profiles = {
+  ["5.1"] = {
+    identifier_mode = "locale",
+  },
+  ["LuaJIT"] = {
+    identifier_mode = "extended",
+    goto_keyword = true,
+    labels = true,
+    hex_floats = true,
+    binary_numbers = true,
+    integer_suffixes = true,
+    imaginary_numbers = true,
+    hex_escapes = true,
+    skip_whitespace_escape = true,
+    unicode_escapes = true,
+    strict_escapes = true,
+  },
+  ["5.2"] = {
+    identifier_mode = "ascii",
+    goto_keyword = true,
+    labels = true,
+    hex_floats = true,
+    hex_escapes = true,
+    skip_whitespace_escape = true,
+    strict_escapes = true,
+  },
+  ["5.3"] = {
+    identifier_mode = "ascii",
+    goto_keyword = true,
+    labels = true,
+    hex_floats = true,
+    hex_escapes = true,
+    skip_whitespace_escape = true,
+    unicode_escapes = true,
+    strict_escapes = true,
+    bitwise_operators = true,
+    integer_division = true,
+  },
+  ["5.4"] = {
+    identifier_mode = "ascii",
+    goto_keyword = true,
+    labels = true,
+    hex_floats = true,
+    hex_escapes = true,
+    skip_whitespace_escape = true,
+    unicode_escapes = true,
+    strict_escapes = true,
+    bitwise_operators = true,
+    integer_division = true,
+  },
+  ["5.5"] = {
+    identifier_mode = "ascii",
+    goto_keyword = true,
+    global_keyword = true,
+    labels = true,
+    hex_floats = true,
+    hex_escapes = true,
+    skip_whitespace_escape = true,
+    unicode_escapes = true,
+    strict_escapes = true,
+    bitwise_operators = true,
+    integer_division = true,
+  },
 }
 
 -- Keyword keys use a collision-free base-26 encoding. Starting at 1 keeps
@@ -41,6 +111,8 @@ local keywords = {
   [20621] = "Keyword", -- end
   [21337] = "Keyword", -- for
   [255320142545] = "Keyword", -- function
+  [572404] = "Keyword", -- goto
+  [385477519] = "Keyword", -- global
   [889] = "Keyword", -- if
   [897] = "Keyword", -- in
   [17155539] = "Keyword", -- local
@@ -66,29 +138,60 @@ local escaped2char = {
   [34] = '"',
 }
 
-local function is_identifier_start(c)
-  return c == 95 -- _
-    or (65 <= c and c <= 90) -- A-Z
-    or (97 <= c and c <= 122) -- a-z
+local function is_identifier_start(c, features)
+  if c < 128 then
+    -- _ or A-Z or a-z
+    return c == 95 or (65 <= c and c <= 90) or (97 <= c and c <= 122)
+  end
+
+  local id_mode = features.identifier_mode
+  return id_mode == "extended" or (id_mode == "locale" and find(chr(c), "%a"))
 end
 
 local function is_digit(c)
   return 48 <= c and c <= 57 -- 0-9
 end
 
-local function is_identifier_part(c)
-  return is_digit(c) or is_identifier_start(c)
+local function is_hex_digit(c)
+  return (48 <= c and c <= 57) -- 0-9
+    or (65 <= c and c <= 70) -- A-F
+    or (97 <= c and c <= 102) -- a-f
 end
 
-local function scan_identifier_keyword(input, index)
+local function is_binary_digit(char) return char == 48 or char == 49 end
+
+-- undefined if is_hex_digit(c) is false
+local function hex_digit_value(c)
+  if c <= 57 then return c - 48 end -- 0-9
+  if c <= 70 then return c - 55 end -- A-F, 55 is string.byte("A") - 10
+  return c - 87 -- a-f, 87 is string.byte("a") - 10
+end
+
+local function is_identifier_part(c, features)
+  if is_digit(c) or is_identifier_start(c, features) then return true end
+  return c >= 128
+    and features.identifier_mode == "locale"
+    and find(chr(c), "%w")
+end
+
+local function is_ascii_lower(c)
+  return 97 <= c and c <= 122 -- a-z
+end
+
+local function is_whitespace(c)
+  -- tab, LF, vertical tab, form feed, CR and space
+  return 9 <= c and c <= 13 or c == 32
+end
+
+local function scan_identifier_keyword(input, index, features)
   local first = byte(input, index)
-  local keyword_key = 97 <= first and first <= 122 and 26 + first - 97 or 0
+  local keyword_key = is_ascii_lower(first) and 26 + first - 97 or 0
 
   for i = index + 1, #input do
     local char = byte(input, i)
-    if not is_identifier_part(char) then return i, keyword_key end
+    if not is_identifier_part(char, features) then return i, keyword_key end
     if keyword_key ~= 0 then
-      if i - index < 8 and 97 <= char and char <= 122 then
+      if i - index < 8 and is_ascii_lower(char) then
         keyword_key = keyword_key * 26 + char - 97
       else
         keyword_key = 0
@@ -100,9 +203,7 @@ end
 
 local function skip_whitespaces(input, index)
   for i = index, #input do
-    local char = byte(input, i)
-    -- tab, LF, vertical tab, form feed, CR and space
-    if not (9 <= char and char <= 13) and char ~= 32 then return i end
+    if not is_whitespace(byte(input, i)) then return i end
   end
   return #input + 1
 end
@@ -175,34 +276,88 @@ local function is_as_is_char(char, quote)
   return char ~= quote and char ~= 92 and char ~= 10 and char ~= 13
 end
 
+-- used in encode_utf8 but in module scope to avoid allocating each time
+local limits = { 0x7ff, 0xffff, 0x1fffff, 0x3ffffff, 0x7fffffff }
+local prefixes = { 0xc0, 0xe0, 0xf0, 0xf8, 0xfc }
+
+-- encode a unicode codepoint as UTF-8 sequences string
+local function encode_utf8(codepoint)
+  if codepoint <= 0x7f then return chr(codepoint) end
+
+  local width = 1
+  for i = 1, #limits do
+    if codepoint <= limits[i] then
+      width = i + 1
+      break
+    end
+  end
+
+  local result = {}
+  for i = width, 2, -1 do
+    result[i] = chr(0x80 + codepoint % 0x40)
+    codepoint = floor(codepoint / 0x40)
+  end
+  result[1] = chr(prefixes[width - 1] + codepoint)
+  return table_concat(result)
+end
+
+-- to scan a lua '\u{XXX}' unicode escape,
+-- when valid, return index past close brace and utf8 byte sequence string
+-- when invalid, return `index` and an error message
+local function scan_unicode_escape(input, index, need_value)
+  local length = #input
+  local i = index + 1
+  if i > length or byte(input, i) ~= 123 then -- {
+    return index, "missing opening brace in unicode escape"
+  end
+
+  i = i + 1
+  if i > length or not is_hex_digit(byte(input, i)) then
+    return index, "hexadecimal digit expected in unicode escape"
+  end
+
+  local codepoint = 0
+  repeat
+    codepoint = codepoint * 16 + hex_digit_value(byte(input, i))
+    if codepoint >= 0x80000000 then return index, "unicode escape too large" end
+    i = i + 1
+  until i > length or not is_hex_digit(byte(input, i))
+
+  if i > length or byte(input, i) ~= 125 then -- }
+    return index, "missing closing brace in unicode escape"
+  end
+
+  return i + 1, need_value and encode_utf8(codepoint) or ""
+end
+
 -- there are 3 cases:
 -- 1. invalid quoted string literal, return index, reason
 -- 2. need_value is true,
 --   return index after close quote character, string value of the quoted string
 -- 3. need_value is false,
 --   return index after close quote character and empty string (for consistency)
-local function scan_quote_string(input, index, need_value)
+local function scan_quote_string(input, index, need_value, features)
   local quote = byte(input, index)
   local length = #input
-  local bytes = need_value and {} or nil
+  local values = need_value and {} or nil
   local i = index + 1
 
   while i <= length do
     local char = byte(input, i)
     if char == quote then
-      return i + 1, (bytes and table_concat(bytes) or "")
+      return i + 1, values and table_concat(values) or ""
     elseif char == 92 then -- the escape character
       i = i + 1
       if i > length then return index, "escape character at end of input" end
       local escaped = byte(input, i)
       local single_escaped = escaped2char[escaped]
       if single_escaped ~= nil then
-        if bytes then bytes[#bytes + 1] = single_escaped end
+        if values then values[#values + 1] = single_escaped end
         i = i + 1
       elseif escaped == 10 or escaped == 13 then -- newline or carriage return
         if i >= length then break end
         -- lua normalizes LF, CR, CRLF and LFCR to a single LF
-        if bytes then bytes[#bytes + 1] = "\n" end
+        if values then values[#values + 1] = "\n" end
         local another = escaped == 10 and 13 or 10
         i = i + (byte(input, i + 1) == another and 2 or 1)
       elseif is_digit(escaped) then
@@ -216,24 +371,43 @@ local function scan_quote_string(input, index, need_value)
           j = j + 1
         end
         if value > 255 then return index, "decimal escape too large" end
-        if bytes then bytes[#bytes + 1] = chr(value) end
+        if values then values[#values + 1] = chr(value) end
         i = j
+      elseif escaped == 120 and features.hex_escapes then -- x
+        if
+          i + 2 > length
+          or not is_hex_digit(byte(input, i + 1))
+          or not is_hex_digit(byte(input, i + 2))
+        then
+          return index, "hexadecimal digit expected"
+        end
+        local value = hex_digit_value(byte(input, i + 1)) * 16
+          + hex_digit_value(byte(input, i + 2))
+        if values then values[#values + 1] = chr(value) end
+        i = i + 3
+      elseif escaped == 122 and features.skip_whitespace_escape then -- z
+        i = skip_whitespaces(input, i + 1)
+      elseif escaped == 117 and features.unicode_escapes then -- u
+        local next_index, value_or_err = scan_unicode_escape(input, i, values)
+        if next_index == i then return index, value_or_err end
+        if values then values[#values + 1] = value_or_err end
+        i = next_index
+      elseif features.strict_escapes then
+        return index, "invalid escape sequence"
       else
-        -- TODO in lua5.1, unknown escape sequences are treated as itself
-        -- this behavior changed in newer version
-        if bytes then bytes[#bytes + 1] = chr(escaped) end
+        if values then values[#values + 1] = chr(escaped) end
         i = i + 1
       end
     elseif char == 10 or char == 13 then -- newline or carriage return
       break
     else
-      if bytes then
+      if values then
         local j = i + 1
         while j <= length and is_as_is_char(byte(input, j), quote) do
           j = j + 1
         end
         if j > length then break end
-        bytes[#bytes + 1] = sub(input, i, j - 1)
+        values[#values + 1] = sub(input, i, j - 1)
         i = j
       else
         i = i + 1
@@ -244,86 +418,112 @@ local function scan_quote_string(input, index, need_value)
   return index, "unfinished string"
 end
 
--- based on regexp '(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?'
-local function scan_decimal(input, index)
-  local length = #input
-  local i = index
-
-  if byte(input, i) == 46 then -- leading "."
-    i = i + 1
-    if i > length or not is_digit(byte(input, i)) then return index end
-    repeat
-      i = i + 1
-    until i > length or not is_digit(byte(input, i))
-  else
-    if i > length or not is_digit(byte(input, i)) then return index end
-    repeat
-      i = i + 1
-    until i > length or not is_digit(byte(input, i))
-
-    if i <= length and byte(input, i) == 46 then -- optional "."
-      i = i + 1
-      while i <= length and is_digit(byte(input, i)) do
-        i = i + 1
-      end
-    end
+local function scan_digits(input, index, is_valid_digit)
+  for i = index, #input do
+    if not is_valid_digit(byte(input, i)) then return i end
   end
-
-  local mantissa_end = i
-  if i <= length then
-    local char = byte(input, i)
-    if char == 69 or char == 101 then -- "E" or "e"
-      i = i + 1
-      if i <= length then
-        char = byte(input, i)
-        if char == 43 or char == 45 then i = i + 1 end -- "+" or "-"
-      end
-
-      -- Preserve the longest accepted prefix when the exponent is unfinished.
-      if i > length or not is_digit(byte(input, i)) then return mantissa_end end
-      repeat
-        i = i + 1
-      until i > length or not is_digit(byte(input, i))
-    end
-  end
-
-  return i
+  return #input + 1
 end
 
-local function starts_with_0x(input, index)
-  if index >= #input or byte(input, index) ~= 48 then -- "."
+local function scan_mantissa(input, index, is_valid_digit)
+  local integer_end = scan_digits(input, index, is_valid_digit)
+  local i = integer_end
+  local has_radix_point = i <= #input and byte(input, i) == 46 -- .
+  if has_radix_point then i = scan_digits(input, i + 1, is_valid_digit) end
+
+  -- Require at least one digit on either side of the radix point.
+  if integer_end == index and i <= index + 1 then return index, false end
+  return i, has_radix_point
+end
+
+local function scan_exponent(input, index, upper, lower)
+  if index > #input then return index end
+  local marker = byte(input, index)
+  if marker ~= upper and marker ~= lower then return index end
+
+  local i = index + 1
+  if i <= #input then
+    local char = byte(input, i)
+    if char == 43 or char == 45 then i = i + 1 end -- "+" or "-"
+  end
+
+  -- Leave an unfinished exponent for the malformed-number boundary check.
+  if i > #input or not is_digit(byte(input, i)) then return index end
+  return scan_digits(input, i, is_digit)
+end
+
+local function starts_with_0(input, index, upper, lower)
+  if index >= #input or byte(input, index) ~= 48 then -- "0"
     return false
   end
 
   local second = byte(input, index + 1)
-  return second == 88 or second == 120 -- "x" or "X"
+  return second == lower or second == upper
 end
 
-local function is_hex_char(char)
-  return (65 <= char and char <= 70) -- A-F
-    or (97 <= char and char <= 102) -- a-f
-    or is_digit(char)
-end
-
-local function is_number_continuation(s, index)
+local function is_number_continuation(s, index, features)
   if index > #s then return false end
   local char = byte(s, index)
   -- . or identifier part (digit or letter or underscore)
-  return char == 46 or is_identifier_part(char)
+  return char == 46 or is_identifier_part(char, features)
 end
 
-local function scan_number(input, index)
-  local length = #input
-
-  if starts_with_0x(input, index) then
-    local i = index + 2
-    while i <= length and is_hex_char(byte(input, i)) do
-      i = i + 1
+local function scan_integer_suffix(input, index)
+  local first = byte(input, index)
+  if first == 85 or first == 117 then -- "U" or "u"
+    local second = byte(input, index + 1)
+    local third = byte(input, index + 2)
+    if
+      (second == 76 or second == 108) -- "L" or "l"
+      and (third == 76 or third == 108)
+    then
+      return index + 3
     end
-    return i > index + 2 and i or index
+  elseif first == 76 or first == 108 then -- "L" or "l"
+    local second = byte(input, index + 1)
+    if second == 76 or second == 108 then return index + 2 end
+  end
+  return index
+end
+
+local function scan_number(input, index, features)
+  local i, has_fraction
+
+  if starts_with_0(input, index, 88, 120) then -- "0x" or "0X"
+    local mantissa_start = index + 2
+    if features.hex_floats then
+      local mantissa_end, has_radix_point =
+        scan_mantissa(input, mantissa_start, is_hex_digit)
+      if mantissa_end == mantissa_start then return index end
+      i = scan_exponent(input, mantissa_end, 80, 112) -- "P" or "p"
+      has_fraction = has_radix_point or i > mantissa_end
+    else
+      i = scan_digits(input, mantissa_start, is_hex_digit)
+      if i == mantissa_start then return index end
+    end
+  elseif starts_with_0(input, index, 66, 98) then -- "0b" or "0B"
+    if not features.binary_numbers then return index end
+    local digit_start = index + 2
+    i = scan_digits(input, digit_start, is_binary_digit)
+    if i == digit_start then return index end
+    has_fraction = false
+  else
+    local mantissa_end, has_radix_point = scan_mantissa(input, index, is_digit)
+    if mantissa_end == index then return index end
+    i = scan_exponent(input, mantissa_end, 69, 101) -- "E" or "e"
+    has_fraction = has_radix_point or i > mantissa_end
   end
 
-  return scan_decimal(input, index)
+  local has_imaginary = false
+  if features.imaginary_numbers then
+    local char = byte(input, i)
+    if char == 73 or char == 105 then -- "I" or "i"
+      i = i + 1
+      has_imaginary = true
+    end
+  end
+  return (has_fraction or has_imaginary or not features.integer_suffixes) and i
+    or scan_integer_suffix(input, i)
 end
 
 local function scan_comment(input, index)
@@ -350,7 +550,7 @@ local function scan_comment(input, index)
   return length + 1
 end
 
-local function scan_punctuator(input, index)
+local function scan_punctuator(input, index, features)
   local length = #input
   if index > length then return index end
 
@@ -362,6 +562,10 @@ local function scan_punctuator(input, index)
     or (first == 60 and second == 61) -- <=
     or (first == 62 and second == 61) -- >=
     or (first == 46 and second == 46) -- ..
+    or (features.labels and first == 58 and second == 58) -- ::
+    or (features.bitwise_operators and first == 60 and second == 60) -- <<
+    or (features.bitwise_operators and first == 62 and second == 62) -- >>
+    or (features.integer_division and first == 47 and second == 47) -- //
   then
     return index + 2
   end
@@ -387,6 +591,9 @@ local function scan_punctuator(input, index)
     or first == 58 -- :
     or first == 44 -- ,
     or first == 46 -- .
+    or (features.bitwise_operators and first == 38) -- &
+    or (features.bitwise_operators and first == 124) -- |
+    or (features.bitwise_operators and first == 126) -- ~
   then
     return index + 1
   end
@@ -405,53 +612,64 @@ local function scan_vararg(input, index)
     or index
 end
 
-local function scan_token(input, index)
+local function scan_token(features, input, index)
   local length = #input
   if index > length then return "EOF", index end
   local first = byte(input, index)
-  if (9 <= first and first <= 13) or first == 32 then
+  if is_whitespace(first) then
     index = skip_whitespaces(input, index + 1)
     if index > length then return "EOF", index end
     first = byte(input, index)
   end
 
   -- dispatch based on first character
-  if is_identifier_start(first) then
-    local end_ind, keyword_key = scan_identifier_keyword(input, index)
+  if is_identifier_start(first, features) then
+    local end_ind, keyword_key = scan_identifier_keyword(input, index, features)
     if end_ind - index > 8 or keyword_key == 0 then
       return "Identifier", end_ind
     end
     local t = keywords[keyword_key]
+    if keyword_key == 572404 and not features.goto_keyword then t = nil end
+    if keyword_key == 385477519 and not features.global_keyword then t = nil end
     if t == nil then t = "Identifier" end
     return t, end_ind
   elseif is_digit(first) then
-    local end_ind = scan_number(input, index)
-    if end_ind > index and not is_number_continuation(input, end_ind) then
+    -- because plain decimal-integer is most common, make it a fast path
+    local end_ind = index + 1
+    while end_ind <= length and is_digit(byte(input, end_ind)) do
+      end_ind = end_ind + 1
+    end
+    if not is_number_continuation(input, end_ind, features) then
       return "NumberLiteral", end_ind
     end
-    return format("malformed number near %d", index), index
+
+    end_ind = scan_number(input, index, features)
+    if end_ind == index or is_number_continuation(input, end_ind, features) then
+      return format("malformed number near %d", index), index
+    end
+    return "NumberLiteral", end_ind
   elseif first == 46 then -- .
     local end_ind = scan_vararg(input, index)
     if end_ind > index then return "VarargLiteral", end_ind end
-    end_ind = scan_number(input, index)
+
+    end_ind = scan_number(input, index, features)
     if end_ind > index then
-      if not is_number_continuation(input, end_ind) then
-        return "NumberLiteral", end_ind
+      if is_number_continuation(input, end_ind, features) then
+        return format("malformed number near %d", index), index
       end
-      return format("malformed number near %d", index), index
+      return "NumberLiteral", end_ind
     end
-    end_ind = scan_punctuator(input, index)
+
+    end_ind = scan_punctuator(input, index, features)
     if end_ind > index then return "Punctuator", end_ind end
     return format("unknown token after . near %d", index), index
   elseif first == 45 then -- -
-    if index < length and byte(input, index + 1) == 45 then -- --
-      local end_ind, comment_error = scan_comment(input, index)
-      if comment_error ~= nil then
-        return format("%s near %d", comment_error, index), index
-      end
-      return "Comment", end_ind
+    local end_ind, comment_error = scan_comment(input, index)
+    if comment_error ~= nil then
+      return format("%s near %d", comment_error, index), index
     end
-    return "Punctuator", index + 1
+    if end_ind > index then return "Comment", end_ind end
+    return "Punctuator", scan_punctuator(input, index, features)
   elseif first == 91 then -- [
     local second = index < length and byte(input, index + 1) or -1
     if second == 91 or second == 61 then -- [ or =
@@ -461,30 +679,30 @@ local function scan_token(input, index)
       end
       if end_ind > index then return "StringLiteral", end_ind end
     end
-    return "Punctuator", index + 1
+    return "Punctuator", scan_punctuator(input, index, features)
   elseif first == 34 or first == 39 then -- " or '
-    local end_ind = scan_quote_string(input, index, false)
+    local end_ind = scan_quote_string(input, index, false, features)
     if end_ind > index then return "StringLiteral", end_ind end
     return format("malformed string near %d", index), index
   else
-    local end_ind = scan_punctuator(input, index)
+    local end_ind = scan_punctuator(input, index, features)
     if end_ind > index then return "Punctuator", end_ind end
     return format("unknown token near %d", index), index
   end
 end
 
-local function scan_token_value(input, index)
+local function scan_token_value(features, input, index)
   local length = #input
   if index > length then return "EOF", index end
   local first = byte(input, index)
-  if (9 <= first and first <= 13) or first == 32 then
+  if is_whitespace(first) then
     index = skip_whitespaces(input, index + 1)
     if index > length then return "EOF", index end
     first = byte(input, index)
   end
 
   if first == 34 or first == 39 then -- " or '
-    local end_ind, value = scan_quote_string(input, index, true)
+    local end_ind, value = scan_quote_string(input, index, true, features)
     if end_ind > index then return "StringLiteral", end_ind, value end
     return format("malformed string near %d", index), index
   elseif first == 91 then -- [
@@ -497,20 +715,46 @@ local function scan_token_value(input, index)
     end
   end
 
-  local t, end_ind = scan_token(input, index)
+  local t, end_ind = scan_token(features, input, index)
   if not token_types[t] or t == "EOF" then return t, end_ind end
 
   local value = sub(input, index, end_ind - 1)
   if t == "NumberLiteral" then
     value = tonumber(value)
+    if value == nil then
+      return format("unsupported number value near %d", index), index
+    end
   elseif t == "BooleanLiteral" then
     value = first == 116 -- true starts with "t"
   end
   return t, end_ind, value
 end
 
+local lexer_methods = {}
+local lexer_mt = { __index = lexer_methods, __metatable = false }
+
+function lexer_methods:scan_token(input, index)
+  return scan_token(self._features, input, index)
+end
+
+function lexer_methods:scan_token_value(input, index)
+  return scan_token_value(self._features, input, index)
+end
+
+local function new(options)
+  options = options or {}
+  local lua_version = options.lua_version or "5.1"
+  local features = feature_profiles[lua_version]
+  if features == nil then
+    error(format("unsupported Lua version '%s'", tostring(lua_version)), 2)
+  end
+  return setmetatable(
+    { lua_version = lua_version, _features = features },
+    lexer_mt
+  )
+end
+
 return {
   token_types = token_types,
-  scan_token = scan_token,
-  scan_token_value = scan_token_value,
+  new = new,
 }
