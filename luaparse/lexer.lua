@@ -522,10 +522,8 @@ local function scan_number(input, index, features)
       has_imaginary = true
     end
   end
-  if features.integer_suffixes and not has_fraction and not has_imaginary then
-    i = scan_integer_suffix(input, i)
-  end
-  return i
+  return (has_fraction or has_imaginary or not features.integer_suffixes) and i
+    or scan_integer_suffix(input, i)
 end
 
 local function scan_comment(input, index)
@@ -636,41 +634,42 @@ local function scan_token(features, input, index)
     if t == nil then t = "Identifier" end
     return t, end_ind
   elseif is_digit(first) then
-    -- plain decimal-integer fast path
-    local end_ind = scan_digits(input, index + 1, is_digit)
+    -- because plain decimal-integer is most common, make it a fast path
+    local end_ind = index + 1
+    while end_ind <= length and is_digit(byte(input, end_ind)) do
+      end_ind = end_ind + 1
+    end
     if not is_number_continuation(input, end_ind, features) then
       return "NumberLiteral", end_ind
     end
 
     end_ind = scan_number(input, index, features)
-    if
-      end_ind > index and not is_number_continuation(input, end_ind, features)
-    then
-      return "NumberLiteral", end_ind
+    if end_ind == index or is_number_continuation(input, end_ind, features) then
+      return format("malformed number near %d", index), index
     end
-    return format("malformed number near %d", index), index
+    return "NumberLiteral", end_ind
   elseif first == 46 then -- .
     local end_ind = scan_vararg(input, index)
     if end_ind > index then return "VarargLiteral", end_ind end
+
     end_ind = scan_number(input, index, features)
     if end_ind > index then
-      if not is_number_continuation(input, end_ind, features) then
-        return "NumberLiteral", end_ind
+      if is_number_continuation(input, end_ind, features) then
+        return format("malformed number near %d", index), index
       end
-      return format("malformed number near %d", index), index
+      return "NumberLiteral", end_ind
     end
+
     end_ind = scan_punctuator(input, index, features)
     if end_ind > index then return "Punctuator", end_ind end
     return format("unknown token after . near %d", index), index
   elseif first == 45 then -- -
-    if index < length and byte(input, index + 1) == 45 then -- --
-      local end_ind, comment_error = scan_comment(input, index)
-      if comment_error ~= nil then
-        return format("%s near %d", comment_error, index), index
-      end
-      return "Comment", end_ind
+    local end_ind, comment_error = scan_comment(input, index)
+    if comment_error ~= nil then
+      return format("%s near %d", comment_error, index), index
     end
-    return "Punctuator", index + 1
+    if end_ind > index then return "Comment", end_ind end
+    return "Punctuator", scan_punctuator(input, index, features)
   elseif first == 91 then -- [
     local second = index < length and byte(input, index + 1) or -1
     if second == 91 or second == 61 then -- [ or =
@@ -680,7 +679,7 @@ local function scan_token(features, input, index)
       end
       if end_ind > index then return "StringLiteral", end_ind end
     end
-    return "Punctuator", index + 1
+    return "Punctuator", scan_punctuator(input, index, features)
   elseif first == 34 or first == 39 then -- " or '
     local end_ind = scan_quote_string(input, index, false, features)
     if end_ind > index then return "StringLiteral", end_ind end
