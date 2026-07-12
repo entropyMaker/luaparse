@@ -68,6 +68,30 @@ the supplied index points directly at the token. A formatter that preserves
 trivia should retain whitespace between tokens separately instead of assuming
 that every supplied index is the token's first byte.
 
+## Stateful scanning
+
+For sequential scanning, `from_string` stores the input and current position:
+
+```lua
+local scanner = lexer.from_string("local answer = 0x2a", {
+  lua_version = "5.4",
+  raw = false,
+})
+
+local token_type, token = scanner:peek() -- "Keyword", "local"
+token_type, token = scanner:next()       -- consumes the cached token
+token = scanner:typed_next("Identifier") -- "answer"
+```
+
+`peek()` caches its result, so a following `peek()`, `next()`, or
+`typed_next()` does not scan the token again. `typed_next()` raises an error
+without consuming the token when its type does not match, and returns only the
+token value on success. Lexical errors are also raised without advancing.
+
+By default, token values are decoded in the same way as `scan_token_value`.
+Set `raw = true` to return the exact token spelling instead; leading whitespace
+is not included. Both modes return `"EOF", nil` at the end of the input.
+
 ## Caveats
 
 LuaJIT and Lua 5.3 interpreters may impose different limits on the value of a
