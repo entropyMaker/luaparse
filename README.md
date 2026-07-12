@@ -68,6 +68,13 @@ the supplied index points directly at the token. A formatter that preserves
 trivia should retain whitespace between tokens separately instead of assuming
 that every supplied index is the token's first byte.
 
+## Caveats
+
+LuaJIT and Lua 5.3 interpreters may impose different limits on the value of a
+Unicode escape such as `\u{XXX}`. This lexer consistently accepts values below
+2^31 for every profile that supports Unicode escapes and rejects values greater
+than or equal to 2^31.
+
 LuaJIT documents that its loader
 [skips a UTF-8 BOM](https://luajit.org/extensions.html) at the start of
 source code. The lexer does not skip the BOM automatically. Callers that want
