@@ -139,6 +139,10 @@ the same behavior can detect the leading bytes `EF BB BF` and start the first
 scan at byte index `4`; otherwise, start at byte index `1`. Subsequent scans use
 the index returned by the previous scan.
 
+The lexer and parser also do not automatically skip a shebang line at the start
+of source code. Callers that want to parse files beginning with `#!` should
+detect and remove or skip that line before passing the source to this library.
+
 ## Status
 
 Early development. The public API and AST format are not finalized yet.
