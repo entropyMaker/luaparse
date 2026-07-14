@@ -73,6 +73,7 @@ end
 function parser_methods:next()
   local token = self:peek()
   self.current = nil
+  self.last_consumed = token
   return token
 end
 
@@ -117,9 +118,31 @@ function parser_methods:parse_expression_list()
   return expressions
 end
 
+function parser_methods:has_line_break_before(token)
+  local previous = self.last_consumed
+  if previous == nil then return false end
+
+  -- Token ranges are one-based and half-open. Check the source gap between
+  -- the previously consumed token and the token about to be consumed.
+  for i = previous.finish, token.start - 1 do
+    local char = self.source:byte(i)
+    if char == 10 or char == 13 then return true end
+  end
+  return false
+end
+
 -- args ::= '(' [explist] ')' | tableconstructor | String
 function parser_methods:parse_arguments()
-  if self:consume("Punctuator", "(") then
+  if self:is_token("Punctuator", "(") then
+    local opening = self:peek()
+    if
+      self.features.reject_newline_before_call_parenthesis
+      and self:has_line_break_before(opening)
+    then
+      syntax_error(opening, "ambiguous syntax (function call or new statement)")
+    end
+    self:next()
+
     local arguments = {}
     if not self:is_token("Punctuator", ")") then
       arguments = self:parse_expression_list()
@@ -628,6 +651,7 @@ local feature_profiles = {
   ["5.1"] = {
     implemented = true,
     break_must_be_last = true,
+    reject_newline_before_call_parenthesis = true,
   },
   ["LuaJIT"] = {
     implemented = false,
@@ -680,6 +704,7 @@ local function new_parser(source, options)
     )
   end
   return setmetatable({
+    source = source,
     scanner = lexer.from_string(source, { lua_version = lua_version }),
     features = features,
     tokens = {},

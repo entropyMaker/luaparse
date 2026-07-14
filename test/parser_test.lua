@@ -230,6 +230,25 @@ function TestParser:testContextAndLua51Errors()
   assert_error("f(), x = 1, 2", "expected prefix expression")
 end
 
+function TestParser:testLua51ParenthesizedCallLineBreak()
+  -- Lua 5.1 forbids a line break immediately before parenthesized call
+  -- arguments. (https://www.lua.org/manual/5.1/manual.html#2.5.8)
+  assert_error("f\n(x)", "ambiguous syntax")
+  assert_error("return f -- comment\n(x)", "ambiguous syntax")
+  assert_error("f --[[\ncomment\n]] (x)", "ambiguous syntax")
+
+  -- The restriction applies only before parenthesized call arguments.
+  local table_call = parse("f\n{ value }").body[1].expression
+  luaunit.assertEquals(table_call.type, "CallExpression")
+
+  local string_call = parse('f\n"value"').body[1].expression
+  luaunit.assertEquals(string_call.type, "CallExpression")
+
+  -- Newlines inside the argument list remain valid.
+  local multiline_call = parse("f(\nvalue\n)").body[1].expression
+  luaunit.assertEquals(multiline_call.type, "CallExpression")
+end
+
 function TestParser:testLexicallyValidButAlwaysInvalidLua()
   -- a literal expression cannot be used as a statement
   assert_lexically_valid_parse_error(
