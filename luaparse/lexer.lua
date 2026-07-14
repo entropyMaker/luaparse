@@ -11,8 +11,6 @@ local setmetatable = setmetatable
 local tonumber = tonumber
 local tostring = tostring
 
--- Token types: EOF, BooleanLiteral, NumberLiteral, StringLiteral, NilLiteral,
--- VarargLiteral, Keyword, Identifier, Punctuator, Comment.
 local token_types = {
   ["EOF"] = true,
   ["BooleanLiteral"] = true,
@@ -738,8 +736,6 @@ local stateful_lexer_mt = {
   __index = stateful_lexer_methods,
   __metatable = false,
 }
-local nil_token = {}
-
 function lexer_methods:scan_token(input, index)
   return scan_token(self._features, input, index)
 end
@@ -748,67 +744,83 @@ function lexer_methods:scan_token_value(input, index)
   return scan_token_value(self._features, input, index)
 end
 
-local function stateful_scan(self)
-  if self._cached_type ~= "" then
-    local token = self._cached_token
-    if token == nil_token then token = nil end
-    return self._cached_type, token, self._cached_end
+local function scan_token_info(features, input, index)
+  local start_ind = index
+  if start_ind <= #input and is_whitespace(byte(input, start_ind)) then
+    start_ind = skip_whitespaces(input, start_ind + 1)
   end
 
-  local token_type, end_ind, token
-  if self.raw then
-    local start_ind = self._index
-    if
-      start_ind <= #self._input and is_whitespace(byte(self._input, start_ind))
-    then
-      start_ind = skip_whitespaces(self._input, start_ind + 1)
-    end
-    token_type, end_ind = scan_token(self._features, self._input, self._index)
-    if token_types[token_type] and token_type ~= "EOF" then
-      token = sub(self._input, start_ind, end_ind - 1)
-    end
-  else
-    token_type, end_ind, token =
-      scan_token_value(self._features, self._input, self._index)
-  end
-
+  local token_type, end_ind = scan_token(features, input, index)
   if not token_types[token_type] then error(token_type, 3) end
-  self._cached_type = token_type
-  self._cached_token = token == nil and nil_token or token
-  self._cached_end = end_ind
-  return token_type, token, end_ind
+
+  if token_type == "EOF" then
+    return {
+      type = "EOF",
+      raw = "",
+      start = start_ind,
+      finish = end_ind,
+    }
+  end
+
+  local raw = sub(input, start_ind, end_ind - 1)
+  local value = raw
+  if token_type == "StringLiteral" then
+    local first = byte(input, start_ind)
+    if first == 34 or first == 39 then
+      local value_end
+      value_end, value = scan_quote_string(input, start_ind, true, features)
+      if value_end == start_ind then
+        error("malformed string near " .. start_ind, 3)
+      end
+    else
+      value = long_string_value(input, start_ind, end_ind)
+    end
+  elseif token_type == "NumberLiteral" then
+    value = tonumber(raw)
+  elseif token_type == "BooleanLiteral" then
+    value = byte(raw, 1) == 116
+  elseif token_type == "NilLiteral" or token_type == "EOF" then
+    value = nil
+  end
+
+  return {
+    type = token_type,
+    raw = raw,
+    value = value,
+    start = start_ind,
+    finish = end_ind,
+  }
 end
 
-function stateful_lexer_methods:peek()
-  local token_type, token = stateful_scan(self)
-  return token_type, token
+local function stateful_scan(self)
+  if self._cached_token ~= nil then return self._cached_token end
+  local token = scan_token_info(self._features, self._input, self._index)
+  self._cached_token = token
+  return token
 end
+
+function stateful_lexer_methods:peek() return stateful_scan(self) end
 
 function stateful_lexer_methods:next()
-  local token_type, token, end_ind = stateful_scan(self)
-  self._index = end_ind
-  if token_type ~= "EOF" then
-    self._cached_type = ""
-    self._cached_token = false
-    self._cached_end = 0
-  end
-  return token_type, token
+  local token = stateful_scan(self)
+  self._index = token.finish
+  if token.type ~= "EOF" then self._cached_token = nil end
+  return token
 end
 
 function stateful_lexer_methods:typed_next(expected_type)
-  local token_type, token = self:peek()
-  if token_type ~= expected_type then
+  local token = self:peek()
+  if token.type ~= expected_type then
     error(
       format(
         "expected token type '%s', got '%s'",
         tostring(expected_type),
-        token_type
+        token.type
       ),
       2
     )
   end
-  self:next()
-  return token
+  return self:next()
 end
 
 local function new(options)
@@ -834,13 +846,9 @@ local function from_string(input, options)
   end
   return setmetatable({
     lua_version = lua_version,
-    raw = options.raw == true,
     _features = features,
     _input = input,
     _index = 1,
-    _cached_type = "",
-    _cached_token = false,
-    _cached_end = 0,
   }, stateful_lexer_mt)
 end
 
