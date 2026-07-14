@@ -4,7 +4,7 @@ A pure Lua lexer and parser for the Lua programming language.
 
 Repository: https://github.com/entropyMaker/luaparse
 
-The lexer supports Lua 5.1, LuaJIT 2.1, and Lua 5.2 through Lua 5.5.
+The lexer supports Lua 5.1 through Lua 5.5 and LuaJIT 2.1.
 
 ## Goals
 
