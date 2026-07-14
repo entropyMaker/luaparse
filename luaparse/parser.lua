@@ -656,6 +656,8 @@ local feature_profiles = {
   ["LuaJIT"] = {
     implemented = false,
     labels_and_goto = true,
+    empty_statements = true,
+    reject_newline_before_call_parenthesis = true,
   },
   ["5.2"] = {
     implemented = false,
