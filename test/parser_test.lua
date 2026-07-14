@@ -1,0 +1,296 @@
+local luaunit = require("luaunit")
+local lexer = require("luaparse.lexer")
+local parser = require("luaparse.parser")
+
+local function parse(source) return parser.parse(source).ast end
+
+local function assert_error(source, message)
+  luaunit.assertErrorMsgContains(message, function() parser.parse(source) end)
+end
+
+local function assert_lexically_valid_parse_error(source, message)
+  local scanner = lexer.from_string(source)
+  while scanner:next().type ~= "EOF" do
+  end
+  assert_error(source, message)
+end
+
+TestParser = {}
+
+function TestParser:testDeclarationsAssignmentsAndReturns()
+  local ast = parse([[
+    local a, b = 1, "two"
+    a, obj.x, obj[key] = b, 3, nil
+    return a, b;
+  ]])
+  -- there are 3 statements
+  luaunit.assertEquals(#ast.body, 3)
+  -- the first statement declares local variables
+  luaunit.assertEquals(ast.body[1].type, "VariableDeclaration")
+  -- declaration names are wrapped in VariableDeclarator nodes
+  luaunit.assertEquals(ast.body[1].variables[2].identifier.name, "b")
+  -- dotted assignment targets retain member-access syntax
+  luaunit.assertEquals(ast.body[2].variables[2].type, "MemberExpression")
+  -- bracketed assignment targets retain index syntax
+  luaunit.assertEquals(ast.body[2].variables[3].type, "IndexExpression")
+  -- return arguments retain their source order
+  luaunit.assertEquals(ast.body[3].arguments[2].name, "b")
+end
+
+function TestParser:testFunctionFormsAndCalls()
+  local ast = parse([[
+    local function local_name(x, ...) return x, ... end
+    function module.object:method(value) return value end
+    callback = function() return 42 end
+    module.object:method "value"
+  ]])
+  local local_function = ast.body[1]
+  -- local function syntax sets the explicit local scope
+  luaunit.assertEquals(local_function.scope, "local")
+  -- a trailing ellipsis becomes a parameter rather than an expression
+  luaunit.assertEquals(local_function.parameters[2].type, "VarargParameter")
+  local method = ast.body[2]
+  -- the final component of a method declaration uses a colon
+  luaunit.assertEquals(method.identifier.indexer, ":")
+  -- preceding components retain their dotted access
+  luaunit.assertEquals(method.identifier.base.indexer, ".")
+  -- an anonymous function has no identifier
+  luaunit.assertNil(ast.body[3].init[1].identifier)
+  local call = ast.body[4].expression
+  -- method calls preserve their colon member expression
+  luaunit.assertEquals(call.base.indexer, ":")
+  -- shorthand string arguments are decoded normally
+  luaunit.assertEquals(call.arguments[1].value, "value")
+end
+
+function TestParser:testFunctionParameterLists()
+  local ast = parse([[
+    empty = function() end
+    vararg_only = function(...) return ... end
+    named = function(first, second) end
+    named_vararg = function(first, second, ...) return ... end
+  ]])
+  -- an empty parameter list produces no parameter nodes
+  luaunit.assertEquals(#ast.body[1].init[1].parameters, 0)
+  -- a standalone ellipsis produces one VarargParameter
+  luaunit.assertEquals(
+    ast.body[2].init[1].parameters[1].type,
+    "VarargParameter"
+  )
+  -- ordinary names retain their order
+  luaunit.assertEquals(ast.body[3].init[1].parameters[2].name, "second")
+  -- a trailing ellipsis follows all named parameters
+  luaunit.assertEquals(
+    ast.body[4].init[1].parameters[3].type,
+    "VarargParameter"
+  )
+
+  -- a comma must be followed by another name or an ellipsis
+  assert_error("function invalid(a,) end", "expected token type 'Identifier'")
+  -- no parameter may follow an ellipsis
+  assert_error("function invalid(..., a) end", "expected ')'")
+  -- a trailing ellipsis must be the final parameter
+  assert_error("function invalid(a, ..., b) end", "expected ')'")
+  -- consecutive commas do not form a parameter
+  assert_error("function invalid(a,,b) end", "expected token type 'Identifier'")
+end
+
+function TestParser:testControlFlow()
+  local ast = parse([[
+    if ready then work() elseif waiting then pause() else stop() end
+    while running do break end
+    repeat running = step() until not running
+    for i = 1, 10, 2 do work(i) end
+    for key, value in pairs(items) do work(key, value) end
+    do local scoped end
+  ]])
+  -- the first control-flow construct is the if statement
+  luaunit.assertEquals(ast.body[1].type, "IfStatement")
+  -- if, elseif, and else each produce a clause
+  luaunit.assertEquals(#ast.body[1].clauses, 3)
+  -- while loops produce their dedicated statement node
+  luaunit.assertEquals(ast.body[2].type, "WhileStatement")
+  -- the numeric for limit is distinct from its start and step
+  luaunit.assertEquals(ast.body[4].limit.value, 10)
+  -- generic for iterator expressions can be function calls
+  luaunit.assertEquals(ast.body[5].iterators[1].type, "CallExpression")
+  -- explicit do blocks produce their dedicated statement node
+  luaunit.assertEquals(ast.body[6].type, "DoStatement")
+end
+
+function TestParser:testExpressionsAndPrefixChains()
+  local ast = parse([[
+    result = -2^2 + a.b[c]:method().x(y)[z] .. "!" and true or false
+    one = f()
+    single = (f())
+  ]])
+  -- logical operators form the outermost, lowest-precedence expression
+  luaunit.assertEquals(ast.body[1].init[1].type, "LogicalExpression")
+  -- an ordinary call is retained as a call expression
+  luaunit.assertEquals(ast.body[2].init[1].type, "CallExpression")
+  -- explicit parentheses are retained around the call
+  luaunit.assertEquals(ast.body[3].init[1].type, "ParenthesizedExpression")
+end
+
+function TestParser:testOperatorPrecedenceAndAssociativity()
+  -- left-associative multiplication binds more tightly than addition
+  local expression = parse("value = 1 + 2 * 3").body[1].init[1]
+  luaunit.assertEquals(expression.operator, "+")
+  luaunit.assertEquals(expression.right.operator, "*")
+
+  -- exponentiation binds more tightly than a preceding unary operator
+  expression = parse("value = -2 ^ 3").body[1].init[1]
+  luaunit.assertEquals(expression.type, "UnaryExpression")
+  luaunit.assertEquals(expression.operator, "-")
+  luaunit.assertEquals(expression.argument.operator, "^")
+
+  -- a unary operator binds more tightly than binary operators other than power
+  expression = parse("value = -2 * 3").body[1].init[1]
+  luaunit.assertEquals(expression.operator, "*")
+  luaunit.assertEquals(expression.left.type, "UnaryExpression")
+  luaunit.assertEquals(expression.left.operator, "-")
+
+  -- left-associative addition binds more tightly than right-associative concat
+  expression = parse("value = 1 + 2 .. 3").body[1].init[1]
+  luaunit.assertEquals(expression.operator, "..")
+  luaunit.assertEquals(expression.left.operator, "+")
+
+  -- power binds before concat, while repeated concatenation groups to the right
+  expression = parse("value = 1 ^ 2 .. 3 .. 4").body[1].init[1]
+  luaunit.assertEquals(expression.operator, "..")
+  luaunit.assertEquals(expression.left.operator, "^")
+  luaunit.assertEquals(expression.right.operator, "..")
+end
+
+function TestParser:testTableFieldKinds()
+  local ast = parse([[value = { [key] = 1, name = 2; value, trailing = f(), }]])
+  local fields = ast.body[1].init[1].fields
+  -- bracketed keys use TableKey
+  luaunit.assertEquals(fields[1].type, "TableKey")
+  -- identifier keys use TableKeyString
+  luaunit.assertEquals(fields[2].type, "TableKeyString")
+  -- positional fields use TableValue
+  luaunit.assertEquals(fields[3].type, "TableValue")
+  -- a keyed call value remains an identifier-key field
+  luaunit.assertEquals(fields[4].type, "TableKeyString")
+end
+
+function TestParser:testCommentsTokensAndSourceGaps()
+  local result =
+    parser.parse("-- lead\nlocal x = 1 -- trailing\n-- next\nreturn x")
+  -- all 3 comments are collected in source order
+  luaunit.assertEquals(#result.ast.comments, 3)
+  -- a leading comment has no preceding significant token
+  luaunit.assertNil(result.ast.comments[1].previousToken)
+  -- the leading comment is anchored to the following local keyword
+  luaunit.assertNotNil(result.ast.comments[1].nextToken)
+  -- the inline comment is anchored after the preceding numeral
+  luaunit.assertNotNil(result.ast.comments[2].previousToken)
+  -- the inline comment is also anchored before the following return
+  luaunit.assertNotNil(result.ast.comments[2].nextToken)
+  -- comments remain in the complete token stream
+  luaunit.assertEquals(result.tokens[1].type, "Comment")
+
+  local trailing = parser.parse("return 1\n-- final")
+  -- a final comment has no following significant token
+  luaunit.assertNil(trailing.ast.comments[1].nextToken)
+  -- a line comment beginning with a bracket is not a long comment
+  luaunit.assertFalse(
+    parser.parse("--[not long\nreturn").ast.comments[1].multiline
+  )
+  -- a matching long-bracket opener marks a multiline comment
+  luaunit.assertTrue(
+    parser.parse("--[=[long]=]\nreturn").ast.comments[1].multiline
+  )
+end
+
+function TestParser:testContextAndLua51Errors()
+  -- break requires an enclosing loop
+  luaunit.assertErrorMsgEquals(
+    "break outside loop near byte 1",
+    function() parser.parse("break") end
+  )
+  -- break must be the final statement of a Lua 5.1 block
+  assert_error("while true do break work() end", "statement must be last")
+  -- return must be the final statement of its block
+  assert_error("return 1; work()", "statement must be last")
+  -- Lua 5.1 does not allow a standalone semicolon
+  assert_error("; local x", "expected prefix expression")
+  -- Lua 5.1 allows only one optional separator after a statement
+  assert_error("local x;;", "expected prefix expression")
+  -- parenthesized expressions are not assignment targets
+  assert_error("(x) = 1", "invalid assignment target")
+  -- ellipsis is valid only directly inside a vararg function
+  assert_error("function f() return ... end", "outside a vararg function")
+  -- colon member syntax must be followed by call arguments
+  assert_error("a:x", "expected function arguments")
+  -- a completed function call cannot be assigned to
+  assert_error("f() = 1", "expected prefix expression")
+  -- a completed function call cannot begin an assignment target list
+  assert_error("f(), x = 1, 2", "expected prefix expression")
+end
+
+function TestParser:testLua51ParenthesizedCallLineBreak()
+  -- Lua 5.1 forbids a line break immediately before parenthesized call
+  -- arguments. (https://www.lua.org/manual/5.1/manual.html#2.5.8)
+  assert_error("f\n(x)", "ambiguous syntax")
+  assert_error("return f -- comment\n(x)", "ambiguous syntax")
+  assert_error("f --[[\ncomment\n]] (x)", "ambiguous syntax")
+
+  -- The restriction applies only before parenthesized call arguments.
+  local table_call = parse("f\n{ value }").body[1].expression
+  luaunit.assertEquals(table_call.type, "CallExpression")
+
+  local string_call = parse('f\n"value"').body[1].expression
+  luaunit.assertEquals(string_call.type, "CallExpression")
+
+  -- Newlines inside the argument list remain valid.
+  local multiline_call = parse("f(\nvalue\n)").body[1].expression
+  luaunit.assertEquals(multiline_call.type, "CallExpression")
+end
+
+function TestParser:testLexicallyValidButAlwaysInvalidLua()
+  -- a literal expression cannot be used as a statement
+  assert_lexically_valid_parse_error(
+    '"standalone"',
+    "expected prefix expression"
+  )
+  -- a binary expression cannot be used as a statement
+  assert_lexically_valid_parse_error("a + b", "expected '='")
+  -- a local declaration requires an identifier
+  assert_lexically_valid_parse_error(
+    "local 1",
+    "expected token type 'Identifier'"
+  )
+  -- an if condition must be followed by then rather than do
+  assert_lexically_valid_parse_error("if true do end", "expected 'then'")
+  -- an argument list cannot begin with a comma
+  assert_lexically_valid_parse_error("f(, value)", "expected prefix expression")
+  -- adjacent table fields require a comma or semicolon
+  assert_lexically_valid_parse_error("value = { key value }", "expected '}'")
+  -- dotted expressions require brackets when used as table keys
+  assert_lexically_valid_parse_error(
+    "value = { object.key = 1 }",
+    "expected identifier table key"
+  )
+  -- parenthesized expressions cannot use identifier-key shorthand
+  assert_lexically_valid_parse_error(
+    "value = { (key) = 1 }",
+    "expected identifier table key"
+  )
+  -- bracket indexing is not allowed in a named function declaration
+  assert_lexically_valid_parse_error(
+    "function object[index]() end",
+    "expected '('"
+  )
+end
+
+function TestParser:testUnsupportedParserProfileIsExplicit()
+  -- known but unimplemented parser profiles fail explicitly
+  luaunit.assertErrorMsgContains(
+    "not implemented",
+    function() parser.parse("goto label", { lua_version = "5.2" }) end
+  )
+end
+
+os.exit(luaunit.LuaUnit.run())

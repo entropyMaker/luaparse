@@ -3,14 +3,23 @@ local lexer = require("luaparse.lexer")
 
 TestStatefulLexer = {}
 
-function TestStatefulLexer:testPeekAndNext()
+function TestStatefulLexer:testPeekAndNextReturnTokenObjects()
   local scanner = lexer.from_string("  local value")
-  luaunit.assertEquals({ scanner:peek() }, { "Keyword", "local" })
-  luaunit.assertEquals({ scanner:peek() }, { "Keyword", "local" })
-  luaunit.assertEquals({ scanner:next() }, { "Keyword", "local" })
-  luaunit.assertEquals({ scanner:next() }, { "Identifier", "value" })
-  luaunit.assertEquals({ scanner:next() }, { "EOF" })
-  luaunit.assertEquals({ scanner:peek() }, { "EOF" })
+  local peeked = scanner:peek()
+  luaunit.assertEquals(peeked, {
+    type = "Keyword",
+    raw = "local",
+    value = "local",
+    start = 3,
+    finish = 8,
+  })
+  luaunit.assertIs(peeked, scanner:peek())
+  luaunit.assertIs(peeked, scanner:next())
+  luaunit.assertEquals(scanner:next().raw, "value")
+  local eof = scanner:next()
+  luaunit.assertEquals(eof.type, "EOF")
+  luaunit.assertEquals(eof.start, 14)
+  luaunit.assertIs(eof, scanner:peek())
 end
 
 function TestStatefulLexer:testTypedNextDoesNotConsumeMismatch()
@@ -19,26 +28,33 @@ function TestStatefulLexer:testTypedNextDoesNotConsumeMismatch()
     "expected token type 'Keyword', got 'Identifier'",
     function() scanner:typed_next("Keyword") end
   )
-  luaunit.assertEquals(scanner:typed_next("Identifier"), "name")
+  local token = scanner:typed_next("Identifier")
+  luaunit.assertEquals(token.raw, "name")
 end
 
-function TestStatefulLexer:testRawAndDecodedValues()
-  local decoded = lexer.from_string('  0x64 "\\x41" true false', {
+function TestStatefulLexer:testRawAndDecodedValuesTogether()
+  local scanner = lexer.from_string('  0x64 "\\x41" true nil', {
     lua_version = "5.2",
   })
-  luaunit.assertEquals({ decoded:next() }, { "NumberLiteral", 100 })
-  luaunit.assertEquals({ decoded:next() }, { "StringLiteral", "A" })
-  luaunit.assertEquals({ decoded:next() }, { "BooleanLiteral", true })
-  luaunit.assertEquals({ decoded:peek() }, { "BooleanLiteral", false })
-  luaunit.assertEquals({ decoded:next() }, { "BooleanLiteral", false })
+  local number = scanner:next()
+  luaunit.assertEquals(number.raw, "0x64")
+  luaunit.assertEquals(number.value, 100)
+  local string_token = scanner:next()
+  luaunit.assertEquals(string_token.raw, '"\\x41"')
+  luaunit.assertEquals(string_token.value, "A")
+  luaunit.assertEquals(scanner:next().value, true)
+  luaunit.assertNil(scanner:next().value)
+end
 
-  local raw = lexer.from_string('  0x64 "\\x41" true', {
-    lua_version = "5.2",
-    raw = true,
-  })
-  luaunit.assertEquals({ raw:next() }, { "NumberLiteral", "0x64" })
-  luaunit.assertEquals({ raw:next() }, { "StringLiteral", '"\\x41"' })
-  luaunit.assertEquals({ raw:next() }, { "BooleanLiteral", "true" })
+function TestStatefulLexer:testCommentsAndRanges()
+  local scanner = lexer.from_string("x -- note\ny")
+  luaunit.assertEquals(scanner:next().start, 1)
+  local comment = scanner:next()
+  luaunit.assertEquals(comment.type, "Comment")
+  luaunit.assertEquals(comment.raw, "-- note")
+  luaunit.assertEquals(comment.start, 3)
+  luaunit.assertEquals(comment.finish, 10)
+  luaunit.assertEquals(scanner:next().start, 11)
 end
 
 function TestStatefulLexer:testLexicalErrorDoesNotAdvance()
@@ -53,11 +69,9 @@ function TestStatefulLexer:testLexicalErrorDoesNotAdvance()
   )
 end
 
-function TestStatefulLexer:testOptionsAndStatelessApiCoexist()
+function TestStatefulLexer:testStatelessApiStillCoexists()
   local scanner = lexer.from_string("goto", { lua_version = "5.2" })
-  luaunit.assertEquals(scanner.lua_version, "5.2")
-  luaunit.assertFalse(scanner.raw)
-  luaunit.assertEquals({ scanner:next() }, { "Keyword", "goto" })
+  luaunit.assertEquals(scanner:next().type, "Keyword")
 
   local stateless = lexer.new({ lua_version = "5.1" })
   luaunit.assertEquals({ stateless:scan_token("goto", 1) }, { "Identifier", 5 })

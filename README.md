@@ -4,7 +4,7 @@ A pure Lua lexer and parser for the Lua programming language.
 
 Repository: https://github.com/entropyMaker/luaparse
 
-The lexer supports Lua 5.1, LuaJIT 2.1, and Lua 5.2 through Lua 5.5.
+The lexer supports Lua 5.1 through Lua 5.5 and LuaJIT 2.1.
 
 ## Goals
 
@@ -21,6 +21,9 @@ local parser = require("luaparse.parser")
 
 local lua54 = lexer.new({ lua_version = "5.4" })
 local token_type, next_index = lua54:scan_token("local x = 1", 1)
+
+local result = parser.parse("local x = 1")
+local chunk = result.ast
 ```
 
 Supported `lua_version` values are `"5.1"`, `"LuaJIT"`, `"5.2"`, `"5.3"`,
@@ -75,22 +78,52 @@ For sequential scanning, `from_string` stores the input and current position:
 ```lua
 local scanner = lexer.from_string("local answer = 0x2a", {
   lua_version = "5.4",
-  raw = false,
 })
 
-local token_type, token = scanner:peek() -- "Keyword", "local"
-token_type, token = scanner:next()       -- consumes the cached token
-token = scanner:typed_next("Identifier") -- "answer"
+local token = scanner:peek()              -- does not consume "local"
+token = scanner:next()                    -- consumes "local"
+token = scanner:typed_next("Identifier") -- consumes "answer"
 ```
 
-`peek()` caches its result, so a following `peek()`, `next()`, or
-`typed_next()` does not scan the token again. `typed_next()` raises an error
-without consuming the token when its type does not match, and returns only the
-token value on success. Lexical errors are also raised without advancing.
+Stateful methods return a token table with `type`, `raw`, `value`, `start`, and
+`finish` fields. Ranges are one-based, half-open byte offsets around the actual
+token and exclude preceding whitespace. `peek()` caches its result, so a
+following `peek()`, `next()`, or `typed_next()` does not scan the token again.
+`typed_next()` raises an error without consuming the token when its type does
+not match. Lexical errors are also raised without advancing.
 
-By default, token values are decoded in the same way as `scan_token_value`.
-Set `raw = true` to return the exact token spelling instead; leading whitespace
-is not included. Both modes return `"EOF", nil` at the end of the input.
+Every token retains its exact spelling in `raw` and its decoded representation
+in `value`. A syntactically valid numeral has a nil value if the host runtime's
+`tonumber` cannot convert it. Source tools should treat `raw` as authoritative.
+Comments are returned as tokens. EOF has an empty raw spelling and a nil value.
+
+## Parsing
+
+The parser currently implements the Lua 5.1 grammar. Its AST and internal
+feature profiles are designed to accommodate later Lua versions, but requesting
+a later parser profile currently raises an explicit not-implemented error.
+
+```lua
+local result = parser.parse([[
+  -- answer
+  local value = (compute())
+  return value
+]], { lua_version = "5.1" })
+
+local chunk = result.ast
+local tokens = result.tokens
+```
+
+Parsing returns the AST and every significant token and comment in source
+order. Comments are also collected in `Chunk.comments` and anchored to
+neighboring token indices. Token ranges refer to the source string supplied by
+the caller; those ranges and source gaps allow a formatter to preserve comment
+placement, literal spelling, parentheses, table separators, shorthand calls,
+and optional semicolons without placing source locations on every AST node.
+
+The parser validates contextual Lua 5.1 rules, including assignment targets,
+loop-scoped `break`, final-statement placement, and use of `...` only in a
+variadic function.
 
 ## Caveats
 
@@ -105,6 +138,10 @@ source code. The lexer does not skip the BOM automatically. Callers that want
 the same behavior can detect the leading bytes `EF BB BF` and start the first
 scan at byte index `4`; otherwise, start at byte index `1`. Subsequent scans use
 the index returned by the previous scan.
+
+The lexer and parser also do not automatically skip a shebang line at the start
+of source code. Callers that want to parse files beginning with `#!` should
+detect and remove or skip that line before passing the source to this library.
 
 ## Status
 
