@@ -4,8 +4,19 @@ local parser = require("luaparse.parser")
 
 local function parse(source) return parser.parse(source).ast end
 
+local function parse_version(source, lua_version)
+  return parser.parse(source, { lua_version = lua_version }).ast
+end
+
 local function assert_error(source, message)
   luaunit.assertErrorMsgContains(message, function() parser.parse(source) end)
+end
+
+local function assert_version_error(source, lua_version, message)
+  luaunit.assertErrorMsgContains(
+    message,
+    function() parser.parse(source, { lua_version = lua_version }) end
+  )
 end
 
 local function assert_lexically_valid_parse_error(source, message)
@@ -181,19 +192,19 @@ function TestParser:testCommentsTokensAndSourceGaps()
   -- all 3 comments are collected in source order
   luaunit.assertEquals(#result.ast.comments, 3)
   -- a leading comment has no preceding significant token
-  luaunit.assertNil(result.ast.comments[1].previousToken)
+  luaunit.assertNil(result.ast.comments[1].previous_token)
   -- the leading comment is anchored to the following local keyword
-  luaunit.assertNotNil(result.ast.comments[1].nextToken)
+  luaunit.assertNotNil(result.ast.comments[1].next_token)
   -- the inline comment is anchored after the preceding numeral
-  luaunit.assertNotNil(result.ast.comments[2].previousToken)
+  luaunit.assertNotNil(result.ast.comments[2].previous_token)
   -- the inline comment is also anchored before the following return
-  luaunit.assertNotNil(result.ast.comments[2].nextToken)
+  luaunit.assertNotNil(result.ast.comments[2].next_token)
   -- comments remain in the complete token stream
   luaunit.assertEquals(result.tokens[1].type, "Comment")
 
   local trailing = parser.parse("return 1\n-- final")
   -- a final comment has no following significant token
-  luaunit.assertNil(trailing.ast.comments[1].nextToken)
+  luaunit.assertNil(trailing.ast.comments[1].next_token)
   -- a line comment beginning with a bracket is not a long comment
   luaunit.assertFalse(
     parser.parse("--[not long\nreturn").ast.comments[1].multiline
@@ -204,12 +215,9 @@ function TestParser:testCommentsTokensAndSourceGaps()
   )
 end
 
-function TestParser:testContextAndLua51Errors()
-  -- break requires an enclosing loop
-  luaunit.assertErrorMsgEquals(
-    "break outside loop near byte 1",
-    function() parser.parse("break") end
-  )
+function TestParser:testLua51Grammar()
+  -- Context restrictions are semantic, so a standalone break is accepted.
+  luaunit.assertEquals(parse("break").body[1].type, "BreakStatement")
   -- break must be the final statement of a Lua 5.1 block
   assert_error("while true do break work() end", "statement must be last")
   -- return must be the final statement of its block
@@ -220,8 +228,8 @@ function TestParser:testContextAndLua51Errors()
   assert_error("local x;;", "expected prefix expression")
   -- parenthesized expressions are not assignment targets
   assert_error("(x) = 1", "invalid assignment target")
-  -- ellipsis is valid only directly inside a vararg function
-  assert_error("function f() return ... end", "outside a vararg function")
+  -- Vararg context is semantic rather than part of the grammar production.
+  parse("function f() return ... end")
   -- colon member syntax must be followed by call arguments
   assert_error("a:x", "expected function arguments")
   -- a completed function call cannot be assigned to
@@ -285,12 +293,65 @@ function TestParser:testLexicallyValidButAlwaysInvalidLua()
   )
 end
 
-function TestParser:testUnsupportedParserProfileIsExplicit()
-  -- known but unimplemented parser profiles fail explicitly
-  luaunit.assertErrorMsgContains(
-    "not implemented",
-    function() parser.parse("goto label", { lua_version = "5.2" }) end
+function TestParser:testLuaJITDefaultGrammar()
+  local ast = parse_version("goto target ::target:: goto = 1 goto()", "LuaJIT")
+  luaunit.assertEquals(ast.body[1].type, "GotoStatement")
+  luaunit.assertEquals(ast.body[2].type, "LabelStatement")
+  luaunit.assertEquals(ast.body[3].variables[1].name, "goto")
+  luaunit.assertEquals(ast.body[4].type, "FunctionCallStatement")
+
+  assert_version_error("; local x", "LuaJIT", "expected prefix expression")
+  assert_version_error("f\n(x)", "LuaJIT", "ambiguous syntax")
+  assert_version_error("goto goto", "LuaJIT", "expected '='")
+end
+
+function TestParser:testLua52Statements()
+  local ast = parse_version("; goto missing ::label:: ; break; work()", "5.2")
+  luaunit.assertEquals(ast.body[1].type, "EmptyStatement")
+  luaunit.assertEquals(ast.body[2].type, "GotoStatement")
+  luaunit.assertEquals(ast.body[3].type, "LabelStatement")
+  luaunit.assertEquals(ast.body[4].type, "EmptyStatement")
+  luaunit.assertEquals(ast.body[5].type, "BreakStatement")
+  luaunit.assertEquals(ast.body[6].type, "EmptyStatement")
+  luaunit.assertEquals(ast.body[7].type, "FunctionCallStatement")
+
+  -- Label visibility and resolution are semantic checks.
+  parse_version("goto missing ::same:: ::same::", "5.2")
+end
+
+function TestParser:testLua53Operators()
+  local expression = parse_version("value = 1 // 2 | 3", "5.3").body[1].init[1]
+  luaunit.assertEquals(expression.operator, "|")
+  luaunit.assertEquals(expression.left.operator, "//")
+end
+
+function TestParser:testLua54Attributes()
+  local ast = parse_version(
+    "local first <const>, second <unknown> = 1, 2; first = 3",
+    "5.4"
   )
+  local declaration = ast.body[1]
+  luaunit.assertEquals(declaration.variables[1].attribute.name, "const")
+  luaunit.assertEquals(declaration.variables[2].attribute.name, "unknown")
+  luaunit.assertEquals(ast.body[3].type, "AssignmentStatement")
+end
+
+function TestParser:testLua55DeclarationsAndNamedVarargs()
+  local ast = parse_version(
+    [[
+      global exposed <const> = 1
+      global<const> *
+      global function declared(... args) args = {} end
+      local <close> first, second <const> = nil, 2
+    ]],
+    "5.5"
+  )
+  luaunit.assertEquals(ast.body[1].scope, "global")
+  luaunit.assertEquals(ast.body[2].type, "GlobalWildcardDeclaration")
+  luaunit.assertEquals(ast.body[3].scope, "global")
+  luaunit.assertEquals(ast.body[3].parameters[1].identifier.name, "args")
+  luaunit.assertEquals(ast.body[4].attribute.name, "close")
+  luaunit.assertEquals(ast.body[4].variables[2].attribute.name, "const")
 end
 
 os.exit(luaunit.LuaUnit.run())

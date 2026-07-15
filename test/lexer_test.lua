@@ -337,6 +337,7 @@ TestLexerVersions = {}
 
 function TestLexerVersions:testConstructorAndProfileIsolation()
   local default_lexer = lexer.new()
+  local luajit = lexer.new({ lua_version = "LuaJIT" })
   local lua52 = lexer.new({ lua_version = "5.2" })
   local lua55 = lexer.new({ lua_version = "5.5" })
 
@@ -348,6 +349,11 @@ function TestLexerVersions:testConstructorAndProfileIsolation()
   )
 
   luaunit.assertEquals(lex("goto global", default_lexer), {
+    { "Identifier", "goto" },
+    { "Identifier", "global" },
+    { "EOF" },
+  })
+  luaunit.assertEquals(lex("goto global", luajit), {
     { "Identifier", "goto" },
     { "Identifier", "global" },
     { "EOF" },
