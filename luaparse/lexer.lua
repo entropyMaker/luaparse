@@ -30,7 +30,6 @@ local feature_profiles = {
   },
   ["LuaJIT"] = {
     identifier_mode = "extended",
-    goto_keyword = true,
     labels = true,
     hex_floats = true,
     binary_numbers = true,
@@ -274,29 +273,42 @@ local function is_as_is_char(char, quote)
   return char ~= quote and char ~= 92 and char ~= 10 and char ~= 13
 end
 
--- used in encode_utf8 but in module scope to avoid allocating each time
-local limits = { 0x7ff, 0xffff, 0x1fffff, 0x3ffffff, 0x7fffffff }
-local prefixes = { 0xc0, 0xe0, 0xf0, 0xf8, 0xfc }
-
 -- encode a unicode codepoint as UTF-8 sequences string
 local function encode_utf8(codepoint)
-  if codepoint <= 0x7f then return chr(codepoint) end
-
-  local width = 1
-  for i = 1, #limits do
-    if codepoint <= limits[i] then
-      width = i + 1
-      break
-    end
+  if codepoint <= 0x7f then
+    return chr(codepoint)
+  elseif codepoint <= 0x7ff then
+    return chr(0xc0 + floor(codepoint / 0x40), 0x80 + codepoint % 0x40)
+  elseif codepoint <= 0xffff then
+    return chr(
+      0xe0 + floor(codepoint / 0x1000),
+      0x80 + floor(codepoint / 0x40) % 0x40,
+      0x80 + codepoint % 0x40
+    )
+  elseif codepoint <= 0x1fffff then
+    return chr(
+      0xf0 + floor(codepoint / 0x40000),
+      0x80 + floor(codepoint / 0x1000) % 0x40,
+      0x80 + floor(codepoint / 0x40) % 0x40,
+      0x80 + codepoint % 0x40
+    )
+  elseif codepoint <= 0x3ffffff then
+    return chr(
+      0xf8 + floor(codepoint / 0x1000000),
+      0x80 + floor(codepoint / 0x40000) % 0x40,
+      0x80 + floor(codepoint / 0x1000) % 0x40,
+      0x80 + floor(codepoint / 0x40) % 0x40,
+      0x80 + codepoint % 0x40
+    )
   end
-
-  local result = {}
-  for i = width, 2, -1 do
-    result[i] = chr(0x80 + codepoint % 0x40)
-    codepoint = floor(codepoint / 0x40)
-  end
-  result[1] = chr(prefixes[width - 1] + codepoint)
-  return table_concat(result)
+  return chr(
+    0xfc + floor(codepoint / 0x40000000),
+    0x80 + floor(codepoint / 0x1000000) % 0x40,
+    0x80 + floor(codepoint / 0x40000) % 0x40,
+    0x80 + floor(codepoint / 0x1000) % 0x40,
+    0x80 + floor(codepoint / 0x40) % 0x40,
+    0x80 + codepoint % 0x40
+  )
 end
 
 -- to scan a lua '\u{XXX}' unicode escape,

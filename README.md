@@ -4,13 +4,13 @@ A pure Lua lexer and parser for the Lua programming language.
 
 Repository: https://github.com/entropyMaker/luaparse
 
-The lexer supports Lua 5.1 through Lua 5.5 and LuaJIT 2.1.
+The lexer and parser support Lua 5.1 through Lua 5.5 and LuaJIT 2.1.
 
 ## Goals
 
 - Pure Lua implementation
 - No third-party runtime dependencies
-- Version-configurable lexer for Lua 5.1 through Lua 5.5 and LuaJIT
+- Version-configurable lexer and parser for Lua 5.1 through Lua 5.5 and LuaJIT
 - Small, embeddable library interface
 
 ## Modules
@@ -28,7 +28,8 @@ local chunk = result.ast
 
 Supported `lua_version` values are `"5.1"`, `"LuaJIT"`, `"5.2"`, `"5.3"`,
 `"5.4"`, and `"5.5"`. The default is `"5.1"`. The `"LuaJIT"` profile models
-a build with `LUAJIT_ENABLE_LUA52COMPAT`, so `goto` is a keyword.
+the default mode without `LUAJIT_ENABLE_LUA52COMPAT`, where `goto` is a
+contextual keyword and standalone semicolons are not accepted.
 
 `scan_token_value` converts numerals with the host runtime's `tonumber`. It
 returns an `unsupported number value` lexer error when the selected profile
@@ -99,9 +100,8 @@ Comments are returned as tokens. EOF has an empty raw spelling and a nil value.
 
 ## Parsing
 
-The parser currently implements the Lua 5.1 grammar. Its AST and internal
-feature profiles are designed to accommodate later Lua versions, but requesting
-a later parser profile currently raises an explicit not-implemented error.
+The parser implements the Lua 5.1 through Lua 5.5 grammars and the default
+LuaJIT 2.1 grammar.
 
 ```lua
 local result = parser.parse([[
@@ -121,9 +121,10 @@ the caller; those ranges and source gaps allow a formatter to preserve comment
 placement, literal spelling, parentheses, table separators, shorthand calls,
 and optional semicolons without placing source locations on every AST node.
 
-The parser validates contextual Lua 5.1 rules, including assignment targets,
-loop-scoped `break`, final-statement placement, and use of `...` only in a
-variadic function.
+The parser validates grammar only. Semantic restrictions such as label
+visibility, goto resolution, read-only variables, declared globals, loop-scoped
+`break`, and use of `...` only in a variadic function are outside its current
+scope.
 
 ## Caveats
 

@@ -1,5 +1,6 @@
 local lexer = require("luaparse.lexer")
 local format = string.format
+local table_remove = table.remove
 local error = error
 local setmetatable = setmetatable
 local type = type
@@ -25,10 +26,7 @@ local function syntax_error(token, message)
 end
 
 local parser_methods = {}
-local parser_mt = {
-  __index = parser_methods,
-  __metatable = false,
-}
+local parser_mt = { __index = parser_methods, __metatable = false }
 
 -- read tokens until the next non-comment token, retaining every token in source
 -- order and anchoring skipped comments to their neighboring significant tokens
@@ -43,7 +41,7 @@ function parser_methods:read_significant()
         local pending_count = #pending_comments
         if pending_count ~= 0 then
           for i = 1, pending_count do
-            pending_comments[i].nextToken = token_index
+            pending_comments[i].next_token = token_index
           end
           self.pending_comments = {}
         end
@@ -58,21 +56,24 @@ function parser_methods:read_significant()
       -- the pattern is lua version of '^--\[=*\[',
       -- which is beginning of a multiline comment
       multiline = raw:find("^%-%-%[=*%[") ~= nil,
-      previousToken = self.previous_significant,
+      previous_token = self.previous_significant,
     })
     self.comments[#self.comments + 1] = comment
     self.pending_comments[#self.pending_comments + 1] = comment
   end
 end
 
-function parser_methods:peek()
-  if self.current == nil then self.current = self:read_significant() end
-  return self.current
+function parser_methods:peek(offset)
+  offset = offset or 1
+  while #self.lookahead < offset do
+    self.lookahead[#self.lookahead + 1] = self:read_significant()
+  end
+  return self.lookahead[offset]
 end
 
 function parser_methods:next()
   local token = self:peek()
-  self.current = nil
+  table_remove(self.lookahead, 1)
   self.last_consumed = token
   return token
 end
@@ -265,14 +266,20 @@ function parser_methods:parse_table()
 end
 
 -- funcbody ::= '(' [parlist] ')' block end
--- parlist ::= namelist [',' '...'] | '...'
+-- parlist ::= namelist [',' varargparam] | varargparam
+-- varargparam ::= '...' [Name]
 function parser_methods:parse_function_body(identifier, scope)
   self:expect("Punctuator", "(")
   local parameters = {}
   if not self:is_token("Punctuator", ")") then
     repeat
       if self:consume("VarargLiteral") then
-        parameters[#parameters + 1] = node("VarargParameter")
+        local vararg_name
+        if self.features.named_varargs and self:is_token("Identifier") then
+          vararg_name = self:expect_identifier()
+        end
+        parameters[#parameters + 1] =
+          node("VarargParameter", { identifier = vararg_name })
         break
       end
       parameters[#parameters + 1] = self:expect_identifier()
@@ -280,15 +287,8 @@ function parser_methods:parse_function_body(identifier, scope)
   end
   self:expect("Punctuator", ")")
 
-  local old_vararg = self.in_vararg_function
-  local old_loop_depth = self.loop_depth
-  self.in_vararg_function = #parameters > 0
-    and parameters[#parameters].type == "VarargParameter"
-  self.loop_depth = 0
   local body = self:parse_block()
   self:expect("Keyword", "end")
-  self.in_vararg_function = old_vararg
-  self.loop_depth = old_loop_depth
   return node("FunctionDeclaration", {
     identifier = identifier,
     scope = scope,
@@ -318,9 +318,6 @@ function parser_methods:parse_primary()
     self:next()
     return node("StringLiteral", { raw = token.raw, value = token.value })
   elseif token_type == "VarargLiteral" then
-    if not self.in_vararg_function then
-      syntax_error(token, "cannot use '...' outside a vararg function")
-    end
     self:next()
     return node("VarargLiteral", { raw = token.raw })
   elseif self:is_token("Punctuator", "{") then
@@ -418,10 +415,55 @@ local function is_assignable(expression)
     or expr_type == "IndexExpression"
 end
 
+-- attrib ::= '<' Name '>'
+-- because attrib is always optional, return nil if next token is not '<'
+function parser_methods:parse_attribute()
+  if not self:consume("Punctuator", "<") then return nil end
+  local name = self:expect_identifier()
+  self:expect("Punctuator", ">")
+  return node("Attribute", { name = name.name })
+end
+
+-- declaratorlist ::= Name [attrib] {',' Name [attrib]}
+function parser_methods:parse_declarator_list()
+  local variables = {}
+  local allow_attr = self.features.variable_attributes
+  repeat
+    local identifier = self:expect_identifier()
+    local attribute
+    if allow_attr then attribute = self:parse_attribute() end
+    variables[#variables + 1] = node("VariableDeclarator", {
+      identifier = identifier,
+      attribute = attribute,
+    })
+  until not self:consume("Punctuator", ",")
+  return variables
+end
+
+-- Lua 5.4: attnamelist ::= declaratorlist
+-- Lua 5.5: attnamelist ::= [attrib] declaratorlist
+function parser_methods:parse_declarators()
+  local attribute
+  if self.features.attribute_prefix then attribute = self:parse_attribute() end
+  return attribute, self:parse_declarator_list()
+end
+
+function parser_methods:is_contextual_goto()
+  if self:is_token("Identifier", "goto") and self.features.contextual_goto then
+    local label = self:peek(2)
+    return label.type == "Identifier" and label.raw ~= "goto"
+  end
+  return false
+end
+
 -- statement parsing methods
 
--- stat ::= varlist '=' explist
+-- stat ::= ';'
+--        | varlist '=' explist
 --        | functioncall
+--        | label
+--        | break
+--        | goto Name
 --        | do block end
 --        | while exp do block end
 --        | repeat block until exp
@@ -430,10 +472,25 @@ end
 --        | for namelist in explist do block end
 --        | function funcname funcbody
 --        | local function Name funcbody
---        | local namelist ['=' explist]
+--        | global function Name funcbody
+--        | local attnamelist ['=' explist]
+--        | global attnamelist ['=' explist]
+--        | global [attrib] '*'
+-- label ::= '::' Name '::'
 function parser_methods:parse_statement()
+  if self.features.empty_statements and self:consume("Punctuator", ";") then
+    return node("EmptyStatement")
+  elseif self:consume("Punctuator", "::") then
+    local label = self:expect_identifier()
+    self:expect("Punctuator", "::")
+    return node("LabelStatement", { label = label })
+  -- stat ::= goto Name
+  elseif self:is_token("Keyword", "goto") or self:is_contextual_goto() then
+    self:next()
+    local label = self:expect_identifier()
+    return node("GotoStatement", { label = label })
   -- do block end
-  if self:consume("Keyword", "do") then
+  elseif self:consume("Keyword", "do") then
     local body = self:parse_block()
     self:expect("Keyword", "end")
     return node("DoStatement", { body = body })
@@ -441,16 +498,12 @@ function parser_methods:parse_statement()
   elseif self:consume("Keyword", "while") then
     local condition = self:parse_expression()
     self:expect("Keyword", "do")
-    self.loop_depth = self.loop_depth + 1
     local body = self:parse_block()
-    self.loop_depth = self.loop_depth - 1
     self:expect("Keyword", "end")
     return node("WhileStatement", { condition = condition, body = body })
   -- repeat block until exp
   elseif self:consume("Keyword", "repeat") then
-    self.loop_depth = self.loop_depth + 1
     local body = self:parse_block()
-    self.loop_depth = self.loop_depth - 1
     self:expect("Keyword", "until")
     local condition = self:parse_expression()
     return node("RepeatStatement", { body = body, condition = condition })
@@ -464,11 +517,10 @@ function parser_methods:parse_statement()
     return self:parse_function_body(identifier, nil)
   elseif self:consume("Keyword", "local") then
     return self:parse_local()
+  elseif self:consume("Keyword", "global") then
+    return self:parse_global()
   elseif self:is_token("Keyword", "break") then
-    local break_token = self:next()
-    if self.loop_depth == 0 then
-      syntax_error(break_token, "break outside loop")
-    end
+    self:next()
     return node("BreakStatement")
   end
   return self:parse_assignment_or_call()
@@ -526,9 +578,7 @@ function parser_methods:parse_for()
     local step
     if self:consume("Punctuator", ",") then step = self:parse_expression() end
     self:expect("Keyword", "do")
-    self.loop_depth = self.loop_depth + 1
     local body = self:parse_block()
-    self.loop_depth = self.loop_depth - 1
     self:expect("Keyword", "end")
     return node("NumericForStatement", {
       variable = variable,
@@ -547,9 +597,7 @@ function parser_methods:parse_for()
   self:expect("Keyword", "in")
   local iterators = self:parse_expression_list()
   self:expect("Keyword", "do")
-  self.loop_depth = self.loop_depth + 1
   local body = self:parse_block()
-  self.loop_depth = self.loop_depth - 1
   self:expect("Keyword", "end")
   return node("GenericForStatement", {
     variables = variables,
@@ -558,28 +606,49 @@ function parser_methods:parse_for()
   })
 end
 
--- invoke after the `local` is already consumed
+-- stat ::= local function Name funcbody
+--        | local attnamelist ['=' explist]
+-- Invoked after the `local` is already consumed.
 function parser_methods:parse_local()
-  -- stat ::= local function Name funcbody
   if self:consume("Keyword", "function") then
     local identifier = self:expect_identifier()
     return self:parse_function_body(identifier, "local")
   end
 
-  -- stat ::= local namelist ['=' explist]
-  local name = self:expect_identifier()
-  local variables = { node("VariableDeclarator", { identifier = name }) }
-  while self:consume("Punctuator", ",") do
-    name = self:expect_identifier()
-    variables[#variables + 1] =
-      node("VariableDeclarator", { identifier = name })
-  end
+  local attribute, variables = self:parse_declarators()
   local init = {}
   if self:consume("Punctuator", "=") then
     init = self:parse_expression_list()
   end
   return node("VariableDeclaration", {
     scope = "local",
+    attribute = attribute,
+    variables = variables,
+    init = init,
+  })
+end
+
+-- stat ::= global function Name funcbody
+--        | global attnamelist ['=' explist]
+--        | global [attrib] '*'
+-- Invoked after the `global` is already consumed.
+function parser_methods:parse_global()
+  if self:consume("Keyword", "function") then
+    local identifier = self:expect_identifier()
+    return self:parse_function_body(identifier, "global")
+  end
+
+  local attribute = self:parse_attribute()
+  if self:consume("Punctuator", "*") then
+    return node("GlobalWildcardDeclaration", { attribute = attribute })
+  end
+
+  local variables = self:parse_declarator_list()
+  local init = self:consume("Punctuator", "=") and self:parse_expression_list()
+    or {}
+  return node("VariableDeclaration", {
+    scope = "global",
+    attribute = attribute,
     variables = variables,
     init = init,
   })
@@ -609,12 +678,15 @@ function parser_methods:parse_assignment_or_call()
   return node("AssignmentStatement", { variables = variables, init = init })
 end
 
--- chunk ::= {stat [';']} [laststat [';']]
--- block ::= chunk
--- laststat ::= return [explist] | break
+-- Lua 5.1: block ::= {stat [';']} [laststat [';']]
+--          laststat ::= return [explist] | break
+-- Lua 5.2+: block ::= {stat} [retstat]
+--           retstat ::= return [explist] [';']
 function parser_methods:parse_block()
   local body = {}
   local final_statement = false
+  local allow_empty = self.features.empty_statements
+  local break_must_be_last = self.features.break_must_be_last
   while true do
     local token = self:peek()
     if is_block_follow(token) then break end
@@ -628,19 +700,17 @@ function parser_methods:parse_block()
       local arguments = empty_return and {} or self:parse_expression_list()
       body[#body + 1] = node("ReturnStatement", { arguments = arguments })
       final_statement = true
+      self:consume("Punctuator", ";")
     else
       local statement = self:parse_statement()
       body[#body + 1] = statement
       -- Lua 5.1 treats both return and break as final statements. Later
       -- profiles keep return final but allow break among ordinary statements.
-      if
-        statement.type == "BreakStatement" and self.features.break_must_be_last
-      then
+      if break_must_be_last and statement.type == "BreakStatement" then
         final_statement = true
       end
+      if not allow_empty then self:consume("Punctuator", ";") end
     end
-
-    self:consume("Punctuator", ";")
   end
   return node("Block", { body = body })
 end
@@ -649,45 +719,28 @@ end
 
 local feature_profiles = {
   ["5.1"] = {
-    implemented = true,
     break_must_be_last = true,
     reject_newline_before_call_parenthesis = true,
   },
   ["LuaJIT"] = {
-    implemented = false,
-    labels_and_goto = true,
-    empty_statements = true,
+    contextual_goto = true,
+    break_must_be_last = true,
     reject_newline_before_call_parenthesis = true,
   },
   ["5.2"] = {
-    implemented = false,
-    labels_and_goto = true,
     empty_statements = true,
   },
   ["5.3"] = {
-    implemented = false,
-    labels_and_goto = true,
     empty_statements = true,
-    bitwise_operators = true,
-    integer_division = true,
   },
   ["5.4"] = {
-    implemented = false,
-    labels_and_goto = true,
     empty_statements = true,
-    bitwise_operators = true,
-    integer_division = true,
     variable_attributes = true,
   },
   ["5.5"] = {
-    implemented = false,
-    labels_and_goto = true,
     empty_statements = true,
-    bitwise_operators = true,
-    integer_division = true,
     variable_attributes = true,
     attribute_prefix = true,
-    global_declarations = true,
     named_varargs = true,
   },
 }
@@ -699,12 +752,6 @@ local function new_parser(source, options)
   if features == nil then
     error(format("unsupported Lua version '%s'", tostring(lua_version)), 3)
   end
-  if not features.implemented then
-    error(
-      format("parser support for Lua %s is not implemented", lua_version),
-      3
-    )
-  end
   return setmetatable({
     source = source,
     scanner = lexer.from_string(source, { lua_version = lua_version }),
@@ -712,8 +759,7 @@ local function new_parser(source, options)
     tokens = {},
     comments = {},
     pending_comments = {},
-    loop_depth = 0,
-    in_vararg_function = true,
+    lookahead = {},
   }, parser_mt)
 end
 
@@ -770,7 +816,7 @@ local node_fields = {
   ["TableKey"] = { "key", "value" },
   ["TableKeyString"] = { "key", "value" },
   ["TableValue"] = { "value" },
-  ["Comment"] = { "raw", "multiline", "previousToken", "nextToken" },
+  ["Comment"] = { "raw", "multiline", "previous_token", "next_token" },
 }
 
 return {
