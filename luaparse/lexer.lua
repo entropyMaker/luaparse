@@ -322,20 +322,19 @@ local function scan_unicode_escape(input, index, need_value)
   end
 
   i = i + 1
-  if i > length or not is_hex_digit(byte(input, i)) then
-    return index, "hexadecimal digit expected in unicode escape"
-  end
-
   local codepoint = 0
-  repeat
-    codepoint = codepoint * 16 + hex_digit_value(byte(input, i))
+  while i <= length do
+    local char = byte(input, i)
+    if not is_hex_digit(char) then break end
+    codepoint = codepoint * 16 + hex_digit_value(char)
     if codepoint >= 0x80000000 then return index, "unicode escape too large" end
     i = i + 1
-  until i > length or not is_hex_digit(byte(input, i))
+  end
 
   if i > length or byte(input, i) ~= 125 then -- }
     return index, "missing closing brace in unicode escape"
   end
+  if i <= index + 2 then return index, "unicode escape cannot be empty" end
 
   return i + 1, need_value and encode_utf8(codepoint) or ""
 end
