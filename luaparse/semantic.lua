@@ -54,12 +54,12 @@ local function jump_into_declaration(node, goto_index, label_index)
   local decl = ""
   for i = goto_index + 1, label_index do
     local statement = body[i]
-    local state_type = statement.type
-    if state_type == "VariableDeclaration" and #statement.variables > 0 then
+    local stat_type = statement.type
+    if stat_type == "VariableDeclaration" and #statement.variables > 0 then
       decl = statement.variables[1].identifier.name
-    elseif state_type == "FunctionDeclaration" and statement.scope ~= nil then
+    elseif stat_type == "FunctionDeclaration" and statement.scope ~= nil then
       decl = statement.identifier.name
-    elseif state_type == "GlobalWildcardDeclaration" then
+    elseif stat_type == "GlobalWildcardDeclaration" then
       decl = "*"
     end
     if decl ~= "" then break end
@@ -68,8 +68,8 @@ local function jump_into_declaration(node, goto_index, label_index)
   if node.type == "RepeatStatement" then return decl end
 
   for i = label_index, #body do
-    local state_type = body[i].type
-    if state_type ~= "LabelStatement" and state_type ~= "EmptyStatement" then
+    local stat_type = body[i].type
+    if stat_type ~= "LabelStatement" and stat_type ~= "EmptyStatement" then
       return decl
     end
   end
@@ -120,8 +120,8 @@ function checker_methods:validate_goto_and_label(func)
     local label2index = {}
     node2labels[has_body] = label2index
     for i, statement in ipairs(has_body.body) do
-      local state_type = statement.type
-      if state_type == "LabelStatement" then
+      local stat_type = statement.type
+      if stat_type == "LabelStatement" then
         local name = statement.label.name
         local index = label2index[name]
         local node_defined_name = index and has_body or nil
@@ -139,9 +139,9 @@ function checker_methods:validate_goto_and_label(func)
         else
           label2index[name] = i
         end
-      elseif statement_has_body(state_type) then
+      elseif statement_has_body(stat_type) then
         collect_labels(statement, has_body)
-      elseif state_type == "IfStatement" then
+      elseif stat_type == "IfStatement" then
         for _, clause in ipairs(statement.clauses) do
           collect_labels(clause, has_body)
         end
@@ -153,9 +153,9 @@ function checker_methods:validate_goto_and_label(func)
   -- stack_index records the index of each `has_body` in the stack
   local function resolve_gotos(has_body, stack_index)
     for i, statement in ipairs(has_body.body) do
-      local state_type = statement.type
+      local stat_type = statement.type
       stack_index[has_body] = i
-      if state_type == "GotoStatement" then
+      if stat_type == "GotoStatement" then
         local name = statement.label.name
         local node, index = find_label(name, has_body)
         if node == nil then
@@ -177,9 +177,9 @@ function checker_methods:validate_goto_and_label(func)
             )
           end
         end
-      elseif statement_has_body(state_type) then
+      elseif statement_has_body(stat_type) then
         resolve_gotos(statement, stack_index)
-      elseif state_type == "IfStatement" then
+      elseif stat_type == "IfStatement" then
         for _, clause in ipairs(statement.clauses) do
           resolve_gotos(clause, stack_index)
         end
