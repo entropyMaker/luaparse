@@ -12,6 +12,7 @@ function TestStatefulLexer:testPeekAndNextReturnTokenObjects()
     value = "local",
     start = 3,
     finish = 8,
+    line = 1,
   })
   luaunit.assertIs(peeked, scanner:peek())
   luaunit.assertIs(peeked, scanner:next())
@@ -54,7 +55,18 @@ function TestStatefulLexer:testCommentsAndRanges()
   luaunit.assertEquals(comment.raw, "-- note")
   luaunit.assertEquals(comment.start, 3)
   luaunit.assertEquals(comment.finish, 10)
-  luaunit.assertEquals(scanner:next().start, 11)
+  local y = scanner:next()
+  luaunit.assertEquals(y.start, 11)
+  luaunit.assertEquals(y.line, 2)
+end
+
+function TestStatefulLexer:testLogicalLineNumbers()
+  local scanner = lexer.from_string("a\r\nb\n\rc\rd")
+  luaunit.assertEquals(scanner:next().line, 1)
+  luaunit.assertEquals(scanner:next().line, 2)
+  luaunit.assertEquals(scanner:next().line, 3)
+  luaunit.assertEquals(scanner:next().line, 4)
+  luaunit.assertEquals(scanner:next().line, 4)
 end
 
 function TestStatefulLexer:testLexicalErrorDoesNotAdvance()

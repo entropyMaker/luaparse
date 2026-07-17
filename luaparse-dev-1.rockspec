@@ -24,5 +24,6 @@ build = {
   modules = {
     ["luaparse.lexer"] = "luaparse/lexer.lua",
     ["luaparse.parser"] = "luaparse/parser.lua",
+    ["luaparse.semantic"] = "luaparse/semantic.lua",
   },
 }

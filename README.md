@@ -93,10 +93,11 @@ following `peek()`, `next()`, or `typed_next()` does not scan the token again.
 `typed_next()` raises an error without consuming the token when its type does
 not match. Lexical errors are also raised without advancing.
 
-Every token retains its exact spelling in `raw` and its decoded representation
-in `value`. A syntactically valid numeral has a nil value if the host runtime's
-`tonumber` cannot convert it. Source tools should treat `raw` as authoritative.
-Comments are returned as tokens. EOF has an empty raw spelling and a nil value.
+Every token retains its exact spelling in `raw`, its decoded representation in
+`value`, and its one-based source line in `line`. A syntactically valid numeral
+has a nil value if the host runtime's `tonumber` cannot convert it. Source tools
+should treat `raw` as authoritative. Comments are returned as tokens. EOF has
+an empty raw spelling and a nil value.
 
 ## Parsing
 
@@ -121,10 +122,33 @@ the caller; those ranges and source gaps allow a formatter to preserve comment
 placement, literal spelling, parentheses, table separators, shorthand calls,
 and optional semicolons without placing source locations on every AST node.
 
-The parser validates grammar only. Semantic restrictions such as label
-visibility, goto resolution, read-only variables, declared globals, loop-scoped
-`break`, and use of `...` only in a variadic function are outside its current
-scope.
+The parser validates grammar only. Semantic checking is a separate, optional
+pass over the returned AST:
+
+```lua
+local semantic = require("luaparse.semantic")
+
+local diagnostics = semantic.check(chunk, { lua_version = "5.4" })
+for _, diagnostic in ipairs(diagnostics) do
+  print(diagnostic.line, diagnostic.message)
+end
+```
+
+`semantic.check` supports the same version profiles and defaults to Lua 5.1.
+It returns all manual-defined semantic violations in source order as tables
+with `line` and `message` fields; an empty list means the AST passed the check.
+It does not mutate the AST or raise errors for semantic violations.
+
+The checker covers loop-scoped `break`, variadic-expression context, labels and
+gotos, Lua 5.4 attributes and read-only variables, and Lua 5.5 global
+declarations and additional read-only bindings. LuaJIT uses Lua 5.1 semantics
+plus its Lua 5.2-style goto extension. Diagnostic-bearing AST nodes retain a
+one-based `line`; other AST nodes remain location-free.
+
+Runtime failures are deliberately outside the checker. For example, a zero
+numeric-for step, a non-closable value assigned to a `close` variable, invalid
+operand types, and a Lua 5.5 initialized global that already has a value are
+accepted by this pass. Implementation resource limits are likewise excluded.
 
 ## Caveats
 

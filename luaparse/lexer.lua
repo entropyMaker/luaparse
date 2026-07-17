@@ -755,11 +755,34 @@ function lexer_methods:scan_token_value(input, index)
   return scan_token_value(self._features, input, index)
 end
 
-local function scan_token_info(features, input, index)
+-- Count logical line breaks in the half-open range [start_ind, end_ind).
+-- Lua treats CRLF and LFCR pairs as one line break.
+local function advance_line(input, start_ind, end_ind, line)
+  local index = start_ind
+  while index < end_ind do
+    local char = byte(input, index)
+    if char == 10 or char == 13 then
+      local next_char = byte(input, index + 1)
+      if
+        index + 1 < end_ind
+        and (next_char == 10 or next_char == 13)
+        and next_char ~= char
+      then
+        index = index + 1
+      end
+      line = line + 1
+    end
+    index = index + 1
+  end
+  return line
+end
+
+local function scan_token_info(features, input, index, line)
   local start_ind = index
   if start_ind <= #input and is_whitespace(byte(input, start_ind)) then
     start_ind = skip_whitespaces(input, start_ind + 1)
   end
+  local token_line = advance_line(input, index, start_ind, line)
 
   local token_type, end_ind = scan_token(features, input, index)
   if not token_types[token_type] then error(token_type, 3) end
@@ -770,6 +793,7 @@ local function scan_token_info(features, input, index)
       raw = "",
       start = start_ind,
       finish = end_ind,
+      line = token_line,
     }
   end
 
@@ -800,12 +824,14 @@ local function scan_token_info(features, input, index)
     value = value,
     start = start_ind,
     finish = end_ind,
+    line = token_line,
   }
 end
 
 local function stateful_scan(self)
   if self._cached_token ~= nil then return self._cached_token end
-  local token = scan_token_info(self._features, self._input, self._index)
+  local token =
+    scan_token_info(self._features, self._input, self._index, self._line)
   self._cached_token = token
   return token
 end
@@ -814,6 +840,7 @@ function stateful_lexer_methods:peek() return stateful_scan(self) end
 
 function stateful_lexer_methods:next()
   local token = stateful_scan(self)
+  self._line = advance_line(self._input, self._index, token.finish, self._line)
   self._index = token.finish
   if token.type ~= "EOF" then self._cached_token = nil end
   return token
@@ -860,6 +887,7 @@ local function from_string(input, options)
     _features = features,
     _input = input,
     _index = 1,
+    _line = 1,
   }, stateful_lexer_mt)
 end
 
