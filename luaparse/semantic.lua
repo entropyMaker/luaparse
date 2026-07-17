@@ -110,8 +110,8 @@ function checker_methods:validate_goto_and_label(func)
     return nil, 0
   end
 
-  -- note, label's visibility never extends across function boundaries.
-  -- so nested functions are ignored in DFS and will be check separately
+  -- note, label's visibility never extends across function boundaries,
+  -- so nested functions are ignored in DFS and checked separately
 
   -- collect all node2labels and node2parent items via DFS
   local function collect_labels(has_body, parent)
