@@ -37,7 +37,7 @@ function checker_methods:adjust_loop_depth(delta)
   self.current_function.loop_depth = self.current_function.loop_depth + delta
 end
 
-local function state_has_body(statement_type)
+local function statement_has_body(statement_type)
   return statement_type == "DoStatement"
     or statement_type == "WhileStatement"
     or statement_type == "RepeatStatement"
@@ -139,7 +139,7 @@ function checker_methods:validate_goto_and_label(func)
         else
           label2index[name] = i
         end
-      elseif state_has_body(state_type) then
+      elseif statement_has_body(state_type) then
         collect_labels(statement, has_body)
       elseif state_type == "IfStatement" then
         for _, clause in ipairs(statement.clauses) do
@@ -177,7 +177,7 @@ function checker_methods:validate_goto_and_label(func)
             )
           end
         end
-      elseif state_has_body(state_type) then
+      elseif statement_has_body(state_type) then
         resolve_gotos(statement, stack_index)
       elseif state_type == "IfStatement" then
         for _, clause in ipairs(statement.clauses) do
