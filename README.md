@@ -35,6 +35,51 @@ contextual keyword and standalone semicolons are not accepted.
 returns an `unsupported number value` lexer error when the selected profile
 accepts a numeral that the host cannot convert.
 
+## Public API and complexity
+
+The complexity bounds below use `n` for the source byte length or AST node
+count, `k` for the bytes in one token plus its leading whitespace, `d` for the
+maximum active semantic-scope depth, and `h` for syntactic or AST nesting
+depth. Space bounds exclude caller-owned input but include returned and cached
+values. Table access is expected O(1).
+
+### `luaparse.lexer`
+
+| API | Behavior | Worst case |
+| --- | --- | --- |
+| `lexer.token_types` | Set of token type names returned by scanners. Treat it as read-only. | O(1) expected lookup. |
+| `lexer.new([options])` | Creates a stateless lexer. `options.lua_version` defaults to `"5.1"`. | O(1) time and space. |
+| `scanner:scan_token(input, index)` | Skips whitespace at the one-based byte index and returns a token type and exclusive end index. A lexical failure returns an error string and the original index. | O(k) time and O(1) auxiliary space. |
+| `scanner:scan_token_value(input, index)` | Scans as above and also returns the decoded token value. | O(k) time and O(k) space for decoded strings. |
+| `lexer.from_string(input[, options])` | Creates a stateful lexer at byte one and retains the input. | O(1) construction time and space. |
+| `scanner:peek()` | Returns the next token without consuming it and raises on lexical failure. | First peek is O(k) time and O(k) cache/output space; repeated peeks are O(1). |
+| `scanner:next()` | Returns and consumes the next token and raises on lexical failure. | O(k) time and O(k) output space. |
+| `scanner:typed_next(expected_type)` | Acts like `next`, but raises without consuming when the type differs. | Same as `next`. |
+
+A complete sequential scan is O(n) time. The stateful scanner retains only the
+input, its position, and at most one cached token, so its auxiliary space is
+O(k) beyond returned tokens.
+
+### `luaparse.parser`
+
+| API | Behavior | Worst case |
+| --- | --- | --- |
+| `parser.node_fields` | Maps every AST node type to all fields it can contain across supported profiles. Treat it as read-only. | O(1) expected lookup. |
+| `parser.parse(source[, options])` | Returns `{ ast = chunk, tokens = tokens }`; `options.lua_version` defaults to `"5.1"`. Lexical and syntax failures raise errors. | O(n) time and O(n) space, including the AST and retained tokens; O(h) recursive stack space. |
+
+### `luaparse.semantic`
+
+| API | Behavior | Worst case |
+| --- | --- | --- |
+| `semantic.check(ast[, options])` | Checks a parser-produced `Chunk` without modifying it and returns source-ordered `{ message, line }` diagnostics. `options.lua_version` defaults to `"5.1"`. Invalid arguments raise errors; semantic violations do not. | O(n²) time and O(n) space, with O(h) recursive stack space. |
+
+The ordinary semantic traversal is O(n*d), because resolving an identifier can
+walk every active scope. It reaches O(n²) with both linearly deep scope nesting
+and linearly many references at the deepest point. Goto and label validation
+also has an O(n²) worst case when many gotos repeatedly scan a long interval or
+walk a deep block ancestry. With bounded scope depth and sparse, nearby gotos,
+semantic checking is effectively O(n).
+
 ## Choosing a scanning method
 
 Both scanning methods validate the same version-specific lexical syntax and

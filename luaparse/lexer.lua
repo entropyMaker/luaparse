@@ -11,6 +11,8 @@ local setmetatable = setmetatable
 local tonumber = tonumber
 local tostring = tostring
 
+-- Public set of token type names returned by every scanner. Callers should
+-- treat this exported table as read-only.
 local token_types = {
   ["EOF"] = true,
   ["BooleanLiteral"] = true,
@@ -747,10 +749,18 @@ local stateful_lexer_mt = {
   __index = stateful_lexer_methods,
   __metatable = false,
 }
+--- Scan one token after any leading whitespace at the one-based byte `index`.
+--- Returns its type and exclusive end index, or an error string and `index`.
+--- Runs in O(k) time and O(1) auxiliary space, where k is the number of bytes
+--- in the skipped whitespace and token.
 function lexer_methods:scan_token(input, index)
   return scan_token(self._features, input, index)
 end
 
+--- Scan and decode one token after leading whitespace at the byte `index`.
+--- Returns its type, exclusive end index, and value; lexical failures return
+--- an error string and `index`. Runs in O(k) time and O(k) space for a decoded
+--- string value, where k is the skipped whitespace and token length.
 function lexer_methods:scan_token_value(input, index)
   return scan_token_value(self._features, input, index)
 end
@@ -836,8 +846,13 @@ local function stateful_scan(self)
   return token
 end
 
+--- Return the next token without consuming it, raising on a lexical error.
+--- The first call for a token takes O(k) time and O(k) output/cache space;
+--- subsequent peeks of that token take O(1) time.
 function stateful_lexer_methods:peek() return stateful_scan(self) end
 
+--- Return and consume the next token, raising on a lexical error.
+--- Runs in O(k) time and O(k) output space for the consumed source span.
 function stateful_lexer_methods:next()
   local token = stateful_scan(self)
   self._line = advance_line(self._input, self._index, token.finish, self._line)
@@ -846,6 +861,8 @@ function stateful_lexer_methods:next()
   return token
 end
 
+--- Consume the next token only if its type equals `expected_type`.
+--- A mismatch raises without consuming it. Complexity is the same as `next`.
 function stateful_lexer_methods:typed_next(expected_type)
   local token = self:peek()
   if token.type ~= expected_type then
@@ -861,6 +878,8 @@ function stateful_lexer_methods:typed_next(expected_type)
   return self:next()
 end
 
+--- Create a version-configured stateless lexer.
+--- `options.lua_version` defaults to `"5.1"`. Runs in O(1) time and space.
 local function new(options)
   options = options or {}
   local lua_version = options.lua_version or "5.1"
@@ -874,6 +893,9 @@ local function new(options)
   )
 end
 
+--- Create a stateful lexer over `input`, initially positioned at byte one.
+--- `options.lua_version` defaults to `"5.1"`. Construction takes O(1) time
+--- and space and retains a reference to the input string.
 local function from_string(input, options)
   if type(input) ~= "string" then error("input must be a string", 2) end
   options = options or {}

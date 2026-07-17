@@ -508,6 +508,13 @@ function checker_methods:visit_statement(statement)
   end
 end
 
+--- Check a parser-produced Chunk without mutating it.
+--- `options.lua_version` defaults to `"5.1"`. Returns source-ordered
+--- `{ message, line }` diagnostics and raises only for invalid arguments.
+--- For n AST nodes and maximum scope depth d, ordinary checking takes O(n*d)
+--- time because identifier lookup walks active scopes. Goto/label checking and
+--- the complete pass are O(n^2) in the worst case. Space usage is O(n), with
+--- O(h) recursive stack space for AST nesting depth h.
 local function check(ast, options)
   if type(ast) ~= "table" or ast.type ~= "Chunk" then
     error("ast must be a Chunk node", 2)

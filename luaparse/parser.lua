@@ -766,6 +766,10 @@ local function new_parser(source, options)
   }, parser_mt)
 end
 
+--- Parse `source` using `options.lua_version`, which defaults to `"5.1"`.
+--- Returns `{ ast = chunk, tokens = tokens }` and raises on lexical or syntax
+--- errors. For n source bytes, parsing takes O(n) time and O(n) space; the
+--- recursive parser uses O(h) stack space for syntactic nesting depth h.
 local function parse(source, options)
   if type(source) ~= "string" then error("source must be a string", 2) end
   local state = new_parser(source, options)
@@ -775,9 +779,10 @@ local function parse(source, options)
   return { ast = ast, tokens = state.tokens }
 end
 
--- possible fields for AST nodes across all planned Lua version profiles;
--- fields whose values are nil are absent from the actual Lua table
--- only some nodes have line field now, for the semantic's error reporting
+-- Public map from AST node type to all fields that type can contain across the
+-- supported profiles. Callers should treat this exported table as read-only.
+-- Fields whose values are nil are absent from actual nodes. Only nodes used as
+-- semantic diagnostic anchors currently have a line field.
 local node_fields = {
   ["Chunk"] = { "body", "comments" },
   ["BreakStatement"] = { "line" },
