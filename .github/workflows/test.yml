@@ -36,6 +36,16 @@ jobs:
     - name: Install LuaUnit
       run: luarocks install luaunit
 
+    - name: Validate release rockspec
+      run: luarocks lint luaparse-0.1.0-1.rockspec
+
+    - name: Build, install, and load release rock
+      run: |
+        rock_tree="$RUNNER_TEMP/luaparse-rock-tree"
+        luarocks --tree="$rock_tree" make luaparse-0.1.0-1.rockspec
+        lua_path=$(luarocks --tree="$rock_tree" path --lr-path)
+        LUA_PATH="$lua_path" lua -e 'require("luaparse.lexer"); require("luaparse.parser"); require("luaparse.semantic")'
+
     - name: Run all tests
       run: |
         for file in test/*.lua; do

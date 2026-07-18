@@ -13,6 +13,23 @@ The lexer and parser support Lua 5.1 through Lua 5.5 and LuaJIT 2.1.
 - Version-configurable lexer and parser for Lua 5.1 through Lua 5.5 and LuaJIT
 - Small, embeddable library interface
 
+## Installation
+
+The alpha release can be installed from LuaRocks:
+
+```sh
+luarocks install luaparse 0.1.0-1
+```
+
+To install directly from a source checkout instead:
+
+```sh
+luarocks make luaparse-0.1.0-1.rockspec
+```
+
+The package has no third-party runtime dependencies and supports Lua 5.1
+through Lua 5.5 and LuaJIT 2.1.
+
 ## Modules
 
 ```lua
@@ -215,4 +232,5 @@ detect and remove or skip that line before passing the source to this library.
 
 ## Status
 
-Early development. The public API and AST format are not finalized yet.
+Alpha. The public API and AST format are not finalized yet. See the
+[changelog](CHANGELOG.md) for release notes.
