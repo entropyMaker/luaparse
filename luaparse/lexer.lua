@@ -276,7 +276,7 @@ local function is_as_is_char(char, quote)
 end
 
 -- encode a unicode codepoint as UTF-8 sequences string
-local function encode_utf8(codepoint)
+local function encode_utf8_impl(codepoint)
   if codepoint <= 0x7f then
     return chr(codepoint)
   elseif codepoint <= 0x7ff then
@@ -312,6 +312,13 @@ local function encode_utf8(codepoint)
     0x80 + codepoint % 0x40
   )
 end
+
+local runtime_version = tonumber(_VERSION:match("Lua %d+%.(%d+)"))
+local encode_utf8 = runtime_version ~= nil
+    and runtime_version > 3
+    and utf8
+    and utf8.char
+  or encode_utf8_impl
 
 -- to scan a lua '\u{XXX}' unicode escape,
 -- when valid, return index past close brace and utf8 byte sequence string
