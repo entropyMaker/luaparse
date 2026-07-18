@@ -105,7 +105,7 @@ end
 
 function parser_methods:expect_identifier()
   local token = self:expect("Identifier")
-  return node("Identifier", { name = token.raw })
+  return node("Identifier", { name = token.raw, line = token.line })
 end
 
 -- expression parsing methods
@@ -274,12 +274,13 @@ function parser_methods:parse_function_body(identifier, scope)
   if not self:is_token("Punctuator", ")") then
     repeat
       if self:consume("VarargLiteral") then
+        local line = self.last_consumed.line
         local vararg_name
         if self.features.named_varargs and self:is_token("Identifier") then
           vararg_name = self:expect_identifier()
         end
         parameters[#parameters + 1] =
-          node("VarargParameter", { identifier = vararg_name })
+          node("VarargParameter", { identifier = vararg_name, line = line })
         break
       end
       parameters[#parameters + 1] = self:expect_identifier()
@@ -319,7 +320,7 @@ function parser_methods:parse_primary()
     return node("StringLiteral", { raw = token.raw, value = token.value })
   elseif token_type == "VarargLiteral" then
     self:next()
-    return node("VarargLiteral", { raw = token.raw })
+    return node("VarargLiteral", { raw = token.raw, line = token.line })
   elseif self:is_token("Punctuator", "{") then
     return self:parse_table()
   elseif self:consume("Keyword", "function") then
@@ -418,10 +419,11 @@ end
 -- attrib ::= '<' Name '>'
 -- because attrib is always optional, return nil if next token is not '<'
 function parser_methods:parse_attribute()
-  if not self:consume("Punctuator", "<") then return nil end
+  if not self:is_token("Punctuator", "<") then return nil end
+  local line = self:next().line
   local name = self:expect_identifier()
   self:expect("Punctuator", ">")
-  return node("Attribute", { name = name.name })
+  return node("Attribute", { name = name.name, line = line })
 end
 
 -- declaratorlist ::= Name [attrib] {',' Name [attrib]}
@@ -480,15 +482,16 @@ end
 function parser_methods:parse_statement()
   if self.features.empty_statements and self:consume("Punctuator", ";") then
     return node("EmptyStatement")
-  elseif self:consume("Punctuator", "::") then
+  elseif self:is_token("Punctuator", "::") then
+    local line = self:next().line
     local label = self:expect_identifier()
     self:expect("Punctuator", "::")
-    return node("LabelStatement", { label = label })
+    return node("LabelStatement", { label = label, line = line })
   -- stat ::= goto Name
   elseif self:is_token("Keyword", "goto") or self:is_contextual_goto() then
-    self:next()
+    local line = self:next().line
     local label = self:expect_identifier()
-    return node("GotoStatement", { label = label })
+    return node("GotoStatement", { label = label, line = line })
   -- do block end
   elseif self:consume("Keyword", "do") then
     local body = self:parse_block()
@@ -520,8 +523,8 @@ function parser_methods:parse_statement()
   elseif self:consume("Keyword", "global") then
     return self:parse_global()
   elseif self:is_token("Keyword", "break") then
-    self:next()
-    return node("BreakStatement")
+    local line = self:next().line
+    return node("BreakStatement", { line = line })
   end
   return self:parse_assignment_or_call()
 end
@@ -712,7 +715,7 @@ function parser_methods:parse_block()
       if not allow_empty then self:consume("Punctuator", ";") end
     end
   end
-  return node("Block", { body = body })
+  return body
 end
 
 -- end of statement parsing methods
@@ -763,21 +766,26 @@ local function new_parser(source, options)
   }, parser_mt)
 end
 
+--- Parse `source` using `options.lua_version`, which defaults to `"5.1"`.
+--- Returns `{ ast = chunk, tokens = tokens }` and raises on lexical or syntax
+--- errors. For n source bytes, parsing takes O(n) time and O(n) space; the
+--- recursive parser uses O(h) stack space for syntactic nesting depth h.
 local function parse(source, options)
   if type(source) ~= "string" then error("source must be a string", 2) end
   local state = new_parser(source, options)
-  local block = state:parse_block()
+  local body = state:parse_block()
   state:expect("EOF")
-  local ast = node("Chunk", { body = block.body, comments = state.comments })
+  local ast = node("Chunk", { body = body, comments = state.comments })
   return { ast = ast, tokens = state.tokens }
 end
 
--- possible fields for AST nodes across all planned Lua version profiles;
--- fields whose values are nil are absent from the actual Lua table
+-- Public map from AST node type to all fields that type can contain across the
+-- supported profiles. Callers should treat this exported table as read-only.
+-- Fields whose values are nil are absent from actual nodes. Only nodes used as
+-- semantic diagnostic anchors currently have a line field.
 local node_fields = {
   ["Chunk"] = { "body", "comments" },
-  ["Block"] = { "body" },
-  ["BreakStatement"] = {},
+  ["BreakStatement"] = { "line" },
   ["ReturnStatement"] = { "arguments" },
   ["IfStatement"] = { "clauses" },
   ["WhileStatement"] = { "condition", "body" },
@@ -790,21 +798,21 @@ local node_fields = {
   ["FunctionDeclaration"] = { "identifier", "scope", "parameters", "body" },
   ["NumericForStatement"] = { "variable", "start", "limit", "step", "body" },
   ["GenericForStatement"] = { "variables", "iterators", "body" },
-  ["GotoStatement"] = { "label" },
-  ["LabelStatement"] = { "label" },
+  ["GotoStatement"] = { "label", "line" },
+  ["LabelStatement"] = { "label", "line" },
   ["EmptyStatement"] = {},
   ["IfClause"] = { "condition", "body" },
   ["ElseifClause"] = { "condition", "body" },
   ["ElseClause"] = { "body" },
   ["VariableDeclarator"] = { "identifier", "attribute" },
-  ["Attribute"] = { "name" },
-  ["VarargParameter"] = { "identifier" },
+  ["Attribute"] = { "name", "line" },
+  ["VarargParameter"] = { "identifier", "line" },
   ["NilLiteral"] = { "raw" },
   ["BooleanLiteral"] = { "raw", "value" },
   ["NumberLiteral"] = { "raw", "value" },
   ["StringLiteral"] = { "raw", "value" },
-  ["VarargLiteral"] = { "raw" },
-  ["Identifier"] = { "name" },
+  ["VarargLiteral"] = { "raw", "line" },
+  ["Identifier"] = { "name", "line" },
   ["TableConstructorExpression"] = { "fields" },
   ["BinaryExpression"] = { "operator", "left", "right" },
   ["LogicalExpression"] = { "operator", "left", "right" },

@@ -121,6 +121,9 @@ function TestParser:testControlFlow()
   luaunit.assertEquals(#ast.body[1].clauses, 3)
   -- while loops produce their dedicated statement node
   luaunit.assertEquals(ast.body[2].type, "WhileStatement")
+  -- nested body fields directly contain their statement arrays
+  luaunit.assertEquals(ast.body[2].body[1].type, "BreakStatement")
+  luaunit.assertNil(ast.body[2].body.type)
   -- the numeric for limit is distinct from its start and step
   luaunit.assertEquals(ast.body[4].limit.value, 10)
   -- generic for iterator expressions can be function calls
