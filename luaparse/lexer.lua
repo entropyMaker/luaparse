@@ -313,7 +313,7 @@ local function encode_utf8_impl(codepoint)
   )
 end
 
-local runtime_version = tonumber(_VERSION:match("Lua %d+%.(%d+)"))
+local runtime_version = tonumber(_VERSION:match("Lua 5%.(%d+)"))
 local encode_utf8 = runtime_version ~= nil
     and runtime_version > 3
     and utf8
