@@ -1,9 +1,9 @@
 package = "luaparse"
-version = "0.1.0-1"
+version = "0.1.1-1"
 
 source = {
-  url = "https://github.com/entropyMaker/luaparse/archive/refs/tags/v0.1.0.tar.gz",
-  dir = "luaparse-0.1.0",
+  url = "https://github.com/entropyMaker/luaparse/archive/refs/tags/v0.1.1.tar.gz",
+  dir = "luaparse-0.1.1",
 }
 
 description = {

@@ -18,13 +18,13 @@ The lexer and parser support Lua 5.1 through Lua 5.5 and LuaJIT 2.1.
 The alpha release can be installed from LuaRocks:
 
 ```sh
-luarocks install luaparse 0.1.0-1
+luarocks install luaparse 0.1.1-1
 ```
 
 To install directly from a source checkout instead:
 
 ```sh
-luarocks make luaparse-0.1.0-1.rockspec
+luarocks make luaparse-0.1.1-1.rockspec
 ```
 
 The package has no third-party runtime dependencies and supports Lua 5.1
