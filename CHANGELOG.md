@@ -2,6 +2,13 @@
 
 Notable changes to luaparse are documented in this file.
 
+## 0.1.1 - 2026-09-04
+
+### Fixed
+
+- Use the runtime UTF-8 encoder on Lua 5.4 and newer while preserving support
+  for extended codepoints on Lua 5.3 and older.
+
 ## 0.1.0 - 2026-07-18
 
 Initial alpha release.
