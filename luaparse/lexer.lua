@@ -10,6 +10,7 @@ local error = error
 local setmetatable = setmetatable
 local tonumber = tonumber
 local tostring = tostring
+local type = type
 
 -- Public set of token type names returned by every scanner. Callers should
 -- treat this exported table as read-only.
