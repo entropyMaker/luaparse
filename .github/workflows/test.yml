@@ -7,6 +7,20 @@ on:
     branches: [ master ]
 
 jobs:
+  check-global-access:
+    name: Check global access
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Install Lua 5.1
+      run: sudo apt-get update && sudo apt-get install -y lua5.1
+
+    - name: Check global access
+      run: sh check-global-access.sh
+
   test:
     name: Lua ${{ matrix.lua-version }}
     runs-on: ubuntu-latest
